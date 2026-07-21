@@ -552,7 +552,7 @@ end askText
 		<key>serviceProcessesInput</key>
 		<false/>
 		<key>systemImageName</key>
-		<string>wrench.and.screwdriver</string>
+		<string>hammer</string>
 		<key>useAutomaticInputType</key>
 		<false/>
 		<key>workflowTypeIdentifier</key>
