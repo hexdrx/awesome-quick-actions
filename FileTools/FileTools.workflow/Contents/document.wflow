@@ -1,0 +1,562 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AMApplicationBuild</key>
+	<string>534</string>
+	<key>AMApplicationVersion</key>
+	<string>2.10</string>
+	<key>AMDocumentVersion</key>
+	<string>2</string>
+	<key>actions</key>
+	<array>
+		<dict>
+			<key>action</key>
+			<dict>
+				<key>AMAccepts</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Optional</key>
+					<true/>
+					<key>Types</key>
+					<array>
+						<string>com.apple.applescript.object</string>
+					</array>
+				</dict>
+				<key>AMActionVersion</key>
+				<string>1.0.2</string>
+				<key>AMApplication</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>AMParameterProperties</key>
+				<dict>
+					<key>source</key>
+					<dict/>
+				</dict>
+				<key>AMProvides</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Types</key>
+					<array>
+						<string>com.apple.applescript.object</string>
+					</array>
+				</dict>
+				<key>ActionBundlePath</key>
+				<string>/System/Library/Automator/Run AppleScript.action</string>
+				<key>ActionName</key>
+				<string>Run AppleScript</string>
+				<key>ActionParameters</key>
+				<dict>
+					<key>source</key>
+					<string>-- File Tools — Finder Quick Action (readable source; embedded copy lives in the .workflow)
+
+on run {input, parameters}
+	set paths to {}
+	repeat with itm in input
+		set p to POSIX path of itm
+		if p ends with "/" then set p to text 1 thru -2 of p
+		set end of paths to p
+	end repeat
+	if (count paths) is 0 then return input
+
+	set ops to {"Copy path", "Checksum", "New file here", "Rename batch"}
+	set c to (choose from list ops with title ("File Tools (" &amp; (count paths) &amp; ")") with prompt "Что сделать?" default items {"Copy path"})
+	if c is false then return input
+	set op to item 1 of c
+
+	if op is "Copy path" then
+		my opCopyPath(paths)
+	else if op is "Checksum" then
+		my opChecksum(paths)
+	else if op is "New file here" then
+		my opNewFile(paths)
+	else if op is "Rename batch" then
+		my opRename(paths)
+	end if
+	return input
+end run
+
+on baseName(p)
+	set AppleScript's text item delimiters to "/"
+	set c to last text item of p
+	set AppleScript's text item delimiters to ""
+	return c
+end baseName
+
+on dirOf(p)
+	set AppleScript's text item delimiters to "/"
+	set parts to text items of p
+	if (count of parts) &lt; 2 then
+		set AppleScript's text item delimiters to ""
+		return "."
+	end if
+	set r to (items 1 thru -2 of parts) as text
+	set AppleScript's text item delimiters to ""
+	if r is "" then return "/"
+	return r
+end dirOf
+
+on extOf(p)
+	set nm to my baseName(p)
+	if nm contains "." then
+		set AppleScript's text item delimiters to "."
+		set parts to text items of nm
+		set AppleScript's text item delimiters to ""
+		return item -1 of parts
+	else
+		return ""
+	end if
+end extOf
+
+on baseOf(p)
+	set nm to my baseName(p)
+	if nm contains "." then
+		set AppleScript's text item delimiters to "."
+		set parts to text items of nm
+		if (count of parts) &lt; 2 then
+			set AppleScript's text item delimiters to ""
+			return nm
+		end if
+		set r to (items 1 thru -2 of parts) as text
+		set AppleScript's text item delimiters to ""
+		if r is "" then return nm
+		return r
+	else
+		return nm
+	end if
+end baseOf
+
+on trimSpace(s)
+	repeat while s is not "" and (character 1 of s is in {" ", tab})
+		set s to text 2 thru -1 of s
+	end repeat
+	repeat while s is not "" and (character -1 of s is in {" ", tab})
+		set s to text 1 thru -2 of s
+	end repeat
+	return s
+end trimSpace
+
+on replaceText(s, findT, replaceT)
+	set AppleScript's text item delimiters to findT
+	set parts to text items of s
+	set AppleScript's text item delimiters to replaceT
+	set r to parts as text
+	set AppleScript's text item delimiters to ""
+	return r
+end replaceText
+
+on padNum(n, width)
+	set s to (n as text)
+	repeat while (length of s) &lt; width
+		set s to "0" &amp; s
+	end repeat
+	return s
+end padNum
+
+on expandTemplate(tmpl, idx)
+	if tmpl does not contain "#" then return tmpl &amp; " " &amp; my padNum(idx, 3)
+	-- find the first contiguous run of "#"
+	set n to length of tmpl
+	set startPos to 0
+	repeat with i from 1 to n
+		if character i of tmpl is "#" then
+			set startPos to i
+			exit repeat
+		end if
+	end repeat
+	set endPos to startPos
+	repeat while endPos &lt; n and (character (endPos + 1) of tmpl is "#")
+		set endPos to endPos + 1
+	end repeat
+	set runLen to endPos - startPos + 1
+	set pre to ""
+	if startPos &gt; 1 then set pre to text 1 thru (startPos - 1) of tmpl
+	set post to ""
+	if endPos &lt; n then set post to text (endPos + 1) thru n of tmpl
+	return pre &amp; my padNum(idx, runLen) &amp; post
+end expandTemplate
+
+on pathExists(p)
+	try
+		do shell script "test -e " &amp; quoted form of p
+		return true
+	on error
+		return false
+	end try
+end pathExists
+
+on isDir(p)
+	try
+		do shell script "test -d " &amp; quoted form of p
+		return true
+	on error
+		return false
+	end try
+end isDir
+
+on joinName(dir, base, ex)
+	if ex is "" then
+		return dir &amp; "/" &amp; base
+	else
+		return dir &amp; "/" &amp; base &amp; "." &amp; ex
+	end if
+end joinName
+
+on uniqueName(dir, base, ex)
+	return my uniqueNameAvoiding(dir, base, ex, {})
+end uniqueName
+
+on uniqueNameAvoiding(dir, base, ex, takenList)
+	set p to my joinName(dir, base, ex)
+	set n to 2
+	repeat while (my pathExists(p)) or (takenList contains p)
+		set p to my joinName(dir, base &amp; " " &amp; (n as text), ex)
+		set n to n + 1
+	end repeat
+	return p
+end uniqueNameAvoiding
+
+on posixToFileURL(p)
+	set enc to do shell script "printf %s " &amp; quoted form of p &amp; " | /usr/bin/perl -pe 's/([^A-Za-z0-9\\-._~\\/])/sprintf(\"%%%02X\",ord($1))/ge'"
+	return "file://" &amp; enc
+end posixToFileURL
+
+on nameOnly(p)
+	return my baseName(p)
+end nameOnly
+
+on opCopyPath(paths)
+	set opts to {"POSIX path", "file:// URL", "Только имя"}
+	set choice to (choose from list opts with title "Copy path" with prompt "Что скопировать?" default items {"POSIX path"})
+	if choice is false then return
+	set mode to item 1 of choice
+	set outLines to {}
+	repeat with p in paths
+		set pp to contents of p
+		if mode is "POSIX path" then
+			set end of outLines to pp
+		else if mode is "file:// URL" then
+			set end of outLines to my posixToFileURL(pp)
+		else
+			set end of outLines to my nameOnly(pp)
+		end if
+	end repeat
+	set AppleScript's text item delimiters to linefeed
+	set payload to outLines as text
+	set AppleScript's text item delimiters to ""
+	do shell script "printf %s " &amp; quoted form of payload &amp; " | pbcopy"
+	my notify("Скопировано " &amp; (count paths) &amp; " путь(ей)")
+end opCopyPath
+
+on notify(m)
+	try
+		display notification m with title "File Tools" sound name "Glass"
+	end try
+end notify
+
+on hashOf(path, algo)
+	if algo is "md5" then
+		return do shell script "/sbin/md5 -q " &amp; quoted form of path
+	else
+		return do shell script "/usr/bin/shasum -a " &amp; algo &amp; " " &amp; quoted form of path &amp; " | cut -d' ' -f1"
+	end if
+end hashOf
+
+on hashesEqual(a, b)
+	set aa to my trimSpace(a)
+	set bb to my trimSpace(b)
+	return (do shell script "printf %s " &amp; quoted form of aa &amp; " | tr 'A-Z' 'a-z'") is (do shell script "printf %s " &amp; quoted form of bb &amp; " | tr 'A-Z' 'a-z'")
+end hashesEqual
+
+on opChecksum(paths)
+	set algOpts to {"SHA-256", "SHA-1", "MD5"}
+	set ac to (choose from list algOpts with title "Checksum" with prompt "Алгоритм?" default items {"SHA-256"})
+	if ac is false then return
+	set alg to item 1 of ac
+	if alg is "SHA-256" then
+		set algo to "256"
+	else if alg is "SHA-1" then
+		set algo to "1"
+	else
+		set algo to "md5"
+	end if
+	set modeOpts to {"Посчитать → в буфер", "Сверить с ожидаемым"}
+	set mc to (choose from list modeOpts with title "Checksum" with prompt (alg &amp; ": что делать?") default items {"Посчитать → в буфер"})
+	if mc is false then return
+	set mode to item 1 of mc
+	-- collect files only  (NB: 'files' is a reserved AppleScript term — use hashFiles)
+	set hashFiles to {}
+	repeat with p in paths
+		set pp to contents of p
+		if not (my isDir(pp)) then set end of hashFiles to pp
+	end repeat
+	if (count hashFiles) is 0 then
+		my notify("Нет файлов для хеширования")
+		return
+	end if
+	if mode is "Посчитать → в буфер" then
+		set outLines to {}
+		repeat with pp in hashFiles
+			set fp to contents of pp
+			if (count hashFiles) is 1 then
+				set end of outLines to my hashOf(fp, algo)
+			else
+				set end of outLines to (my hashOf(fp, algo)) &amp; "  " &amp; my baseName(fp)
+			end if
+		end repeat
+		set AppleScript's text item delimiters to linefeed
+		set payload to outLines as text
+		set AppleScript's text item delimiters to ""
+		do shell script "printf %s " &amp; quoted form of payload &amp; " | pbcopy"
+		my notify(alg &amp; ": " &amp; (count hashFiles) &amp; " хеш(ей) в буфере")
+	else
+		-- verify: single file only
+		set fp to item 1 of hashFiles
+		set expected to ""
+		try
+			set expected to text returned of (display dialog "Ожидаемый хеш для «" &amp; (my baseName(fp)) &amp; "»:" default answer "" with title ("Сверить " &amp; alg) buttons {"Отмена", "OK"} default button "OK" cancel button "Отмена")
+		on error
+			return
+		end try
+		set actual to my hashOf(fp, algo)
+		if my hashesEqual(actual, expected) then
+			display alert "✅ Совпадает" message (alg &amp; " совпадает:" &amp; return &amp; actual)
+		else
+			display alert "❌ Не совпадает" message ("Ожидалось:" &amp; return &amp; (my trimSpace(expected)) &amp; return &amp; return &amp; "Получено:" &amp; return &amp; actual) as warning
+		end if
+	end if
+end opChecksum
+
+on targetDir(paths)
+	if (count paths) is 1 then
+		set only to item 1 of paths
+		if my isDir(only) then return only
+	end if
+	return my dirOf(item 1 of paths)
+end targetDir
+
+on opNewFile(paths)
+	set dir to my targetDir(paths)
+	set nm to ""
+	try
+		set nm to text returned of (display dialog "Имя нового файла (с расширением):" default answer "untitled.md" with title "New file here" buttons {"Отмена", "OK"} default button "OK" cancel button "Отмена")
+	on error
+		return
+	end try
+	set nm to my trimSpace(nm)
+	if nm is "" then return
+	-- split into base + extension for collision-safe naming.
+	-- Leading-dot names (".gitignore", ".env") are dotfiles, not "base.ext":
+	-- keep the whole name as the base so we never produce ".gitignore.gitignore".
+	if nm contains "." and nm does not start with "." then
+		set b to my baseOf("x/" &amp; nm)
+		set e to my extOf("x/" &amp; nm)
+	else
+		set b to nm
+		set e to ""
+	end if
+	set outp to my uniqueName(dir, b, e)
+	do shell script "touch " &amp; quoted form of outp
+	my notify("Создан: " &amp; my baseName(outp))
+end opNewFile
+
+on newBaseFor(mode, oldBase, arg1, arg2, idx)
+	if mode is "prefix" then
+		return arg1 &amp; oldBase
+	else if mode is "suffix" then
+		return oldBase &amp; arg1
+	else if mode is "replace" then
+		return my replaceText(oldBase, arg1, arg2)
+	else
+		return my expandTemplate(arg1, idx)
+	end if
+end newBaseFor
+
+on renameBatch(paths, mode, arg1, arg2)
+	set okc to 0
+	set errs to {}
+	set taken to {}
+	set idx to 1
+	repeat with p in paths
+		set pp to contents of p
+		set dir to my dirOf(pp)
+		if my isDir(pp) then
+			set oldBase to my baseName(pp)
+			set e to ""
+		else
+			set oldBase to my baseOf(pp)
+			set e to my extOf(pp)
+		end if
+		set nb to my newBaseFor(mode, oldBase, arg1, arg2, idx)
+		-- If the computed name equals the current name (no-op: e.g. a replace
+		-- that didn't match, or an empty prefix), skip silently. Do NOT run it
+		-- through uniqueNameAvoiding — the file's own path would look like a
+		-- collision with itself and get bumped to " 2", mangling the name.
+		set ideal to my joinName(dir, nb, e)
+		if ideal is not pp then
+			set outp to my uniqueNameAvoiding(dir, nb, e, taken)
+			set end of taken to outp
+			try
+				do shell script "mv -n " &amp; quoted form of pp &amp; " " &amp; quoted form of outp
+				set okc to okc + 1
+			on error
+				set end of errs to my baseName(pp)
+			end try
+		end if
+		set idx to idx + 1
+	end repeat
+	return {okc, errs}
+end renameBatch
+
+on opRename(paths)
+	set modeOpts to {"Префикс", "Суффикс", "Нумерация", "Замена подстроки"}
+	set mc to (choose from list modeOpts with title "Rename batch" with prompt ("Как переименовать " &amp; (count paths) &amp; " объект(ов)?") default items {"Префикс"})
+	if mc is false then return
+	set sel to item 1 of mc
+	set arg1 to ""
+	set arg2 to ""
+	if sel is "Префикс" then
+		set mode to "prefix"
+		set arg1 to my askText("Текст префикса:", "new_")
+	else if sel is "Суффикс" then
+		set mode to "suffix"
+		set arg1 to my askText("Текст суффикса (перед расширением):", "_v2")
+	else if sel is "Нумерация" then
+		set mode to "number"
+		set arg1 to my askText("Шаблон (# = номер, напр. Photo ###):", "Photo ###")
+	else
+		set mode to "replace"
+		set arg1 to my askText("Найти подстроку:", "")
+		if arg1 is missing value then return
+		if arg1 is "" then
+			my notify("Пустая строка поиска — отменено")
+			return
+		end if
+		set arg2 to my askText("Заменить на:", "")
+	end if
+	if arg1 is missing value or arg2 is missing value then return
+	set res to my renameBatch(paths, mode, arg1, arg2)
+	set okc to item 1 of res
+	set errs to item 2 of res
+	set msg to (okc as text) &amp; " переименовано"
+	if (count errs) &gt; 0 then set msg to msg &amp; ", ошибок: " &amp; (count errs)
+	my notify(msg)
+	if (count errs) &gt; 0 then
+		set AppleScript's text item delimiters to return
+		set etext to errs as text
+		set AppleScript's text item delimiters to ""
+		display alert "Не удалось переименовать" message etext as warning
+	end if
+end opRename
+
+on askText(promptText, defaultText)
+	try
+		return text returned of (display dialog promptText default answer defaultText with title "Rename batch" buttons {"Отмена", "OK"} default button "OK" cancel button "Отмена")
+	on error
+		return missing value
+	end try
+end askText
+</string>
+				</dict>
+				<key>BundleIdentifier</key>
+				<string>com.apple.Automator.RunScript</string>
+				<key>CFBundleVersion</key>
+				<string>1.0.2</string>
+				<key>CanShowSelectedItemsWhenRun</key>
+				<false/>
+				<key>CanShowWhenRun</key>
+				<true/>
+				<key>Category</key>
+				<array>
+					<string>AMCategoryUtilities</string>
+				</array>
+				<key>Class Name</key>
+				<string>RunScriptAction</string>
+				<key>InputUUID</key>
+				<string>B1B2C3D4-0001-4000-8000-000000000001</string>
+				<key>Keywords</key>
+				<array>
+					<string>Run</string>
+				</array>
+				<key>OutputUUID</key>
+				<string>B1B2C3D4-0002-4000-8000-000000000002</string>
+				<key>UUID</key>
+				<string>B1B2C3D4-0003-4000-8000-000000000003</string>
+				<key>UnlocalizedApplications</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>arguments</key>
+				<dict>
+					<key>0</key>
+					<dict>
+						<key>default value</key>
+						<string></string>
+						<key>name</key>
+						<string>source</string>
+						<key>required</key>
+						<string>0</string>
+						<key>type</key>
+						<string>0</string>
+						<key>uuid</key>
+						<string>0</string>
+					</dict>
+				</dict>
+				<key>isViewVisible</key>
+				<integer>1</integer>
+				<key>location</key>
+				<string>309.000000:305.000000</string>
+				<key>nibPath</key>
+				<string>/System/Library/Automator/Run AppleScript.action/Contents/Resources/Base.lproj/main.nib</string>
+			</dict>
+			<key>isViewVisible</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>connectors</key>
+	<dict/>
+	<key>workflowMetaData</key>
+	<dict>
+		<key>applicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>applicationBundleIDsByPath</key>
+		<dict>
+			<key>/System/Library/CoreServices/Finder.app</key>
+			<string>com.apple.finder</string>
+		</dict>
+		<key>applicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>applicationPaths</key>
+		<array>
+			<string>/System/Library/CoreServices/Finder.app</string>
+		</array>
+		<key>inputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject</string>
+		<key>outputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>presentationMode</key>
+		<integer>15</integer>
+		<key>processesInput</key>
+		<false/>
+		<key>serviceApplicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>serviceApplicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>serviceInputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject</string>
+		<key>serviceOutputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>serviceProcessesInput</key>
+		<false/>
+		<key>systemImageName</key>
+		<string>wrench.and.screwdriver</string>
+		<key>useAutomaticInputType</key>
+		<false/>
+		<key>workflowTypeIdentifier</key>
+		<string>com.apple.Automator.servicesMenu</string>
+	</dict>
+</dict>
+</plist>

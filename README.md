@@ -6,6 +6,7 @@ A small collection of polished **macOS Finder Quick Actions** — the items that
 |--------|--------------|--------|
 | 🪄 **[Convert](Convert/)** | Right-click any image / audio / video → pick a target format from a native dropdown → converted file appears next to the original. Batch, per-type menus for mixed selections, a resolution picker for video, a live progress bar, and collision-safe names. | `sips` (images) + `ffmpeg` (A/V) |
 | 🗄️ **[ZIP](ZIP/)** | Right-click file(s)/folder(s) → zipped with `zip -r`. One item → its own `.zip`; many → prompts for one archive name. No macOS junk (`__MACOSX`, `.DS_Store`), never overwrites. | `zip` (built-in) |
+| 🧰 **[File Tools](FileTools/)** | Right-click any file/folder → one menu: **Copy path** (POSIX / `file://` / name), **Checksum** (SHA-256/1, MD5, verify), **New file here**, **Rename batch** (prefix/suffix/numbering/replace). Collision-safe, no dependencies. | built-in (`shasum`, `pbcopy`, `mv`…) |
 
 Each action has a **custom icon** in the right-click menu and adapts to light/dark mode.
 
