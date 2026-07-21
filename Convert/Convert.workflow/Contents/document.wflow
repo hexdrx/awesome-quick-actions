@@ -1,0 +1,534 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AMApplicationBuild</key>
+	<string>534</string>
+	<key>AMApplicationVersion</key>
+	<string>2.10</string>
+	<key>AMDocumentVersion</key>
+	<string>2</string>
+	<key>actions</key>
+	<array>
+		<dict>
+			<key>action</key>
+			<dict>
+				<key>AMAccepts</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Optional</key>
+					<true/>
+					<key>Types</key>
+					<array>
+						<string>com.apple.applescript.object</string>
+					</array>
+				</dict>
+				<key>AMActionVersion</key>
+				<string>1.0.2</string>
+				<key>AMApplication</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>AMParameterProperties</key>
+				<dict>
+					<key>source</key>
+					<dict/>
+				</dict>
+				<key>AMProvides</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Types</key>
+					<array>
+						<string>com.apple.applescript.object</string>
+					</array>
+				</dict>
+				<key>ActionBundlePath</key>
+				<string>/System/Library/Automator/Run AppleScript.action</string>
+				<key>ActionName</key>
+				<string>Run AppleScript</string>
+				<key>ActionParameters</key>
+				<dict>
+					<key>source</key>
+					<string>property gDone : 0
+
+on run {input, parameters}
+	set SIPS to "/usr/bin/sips"
+	set FF to my findFFmpeg()
+	if FF is missing value then
+		display alert "ffmpeg не найден" message "Установи ffmpeg: brew install ffmpeg" &amp; return &amp; "(искал в /opt/homebrew/bin, /usr/local/bin, /opt/local/bin и PATH)." as warning
+		return input
+	end if
+
+	set imgs to {}
+	set vids to {}
+	set auds to {}
+	set skipped to {}
+
+	set imgExt to {"jpg", "jpeg", "png", "heic", "heif", "tif", "tiff", "gif", "bmp", "webp", "jp2"}
+	set vidExt to {"mp4", "mov", "m4v", "mkv", "webm", "avi", "wmv", "flv", "mpg", "mpeg", "m2ts", "ts", "3gp", "ogv"}
+	set audExt to {"mp3", "m4a", "aac", "wav", "flac", "aiff", "aif", "ogg", "oga", "opus", "wma", "amr", "awb", "3ga"}
+
+	repeat with itm in input
+		set p to POSIX path of itm
+		if p ends with "/" then set p to text 1 thru -2 of p
+		set isDir to false
+		try
+			do shell script "test -d " &amp; quoted form of p
+			set isDir to true
+		end try
+		if isDir then
+			set end of skipped to p
+		else
+			set e to my extOf(p)
+			if imgExt contains e then
+				set end of imgs to p
+			else if vidExt contains e then
+				set end of vids to p
+			else if audExt contains e then
+				set end of auds to p
+			else
+				set end of skipped to p
+			end if
+		end if
+	end repeat
+
+	set okCount to 0
+	set errs to {}
+
+	set totalN to (count imgs) + (count vids) + (count auds)
+	set gDone to 0
+	if totalN &gt; 0 then
+		set progress total steps to totalN
+		set progress completed steps to 0
+		set progress description to "Convert"
+		set progress additional description to "Подготовка…"
+	end if
+
+	if (count of imgs) &gt; 0 then
+		set res to my doImages(imgs, SIPS)
+		set okCount to okCount + (item 1 of res)
+		set errs to errs &amp; (item 2 of res)
+	end if
+	if (count of vids) &gt; 0 then
+		set res to my doVideos(vids, FF)
+		set okCount to okCount + (item 1 of res)
+		set errs to errs &amp; (item 2 of res)
+	end if
+	if (count of auds) &gt; 0 then
+		set res to my doAudios(auds, FF)
+		set okCount to okCount + (item 1 of res)
+		set errs to errs &amp; (item 2 of res)
+	end if
+
+	if totalN &gt; 0 then set progress completed steps to totalN
+
+	if okCount is 0 and (count of errs) is 0 then
+		if (count of skipped) &gt; 0 then display notification "Нет поддерживаемых файлов" with title "Convert"
+	else
+		set msg to (okCount as text) &amp; " файл(ов) готово"
+		if (count of errs) &gt; 0 then set msg to msg &amp; ", ошибок: " &amp; (count of errs)
+		my notify("Convert", msg)
+	end if
+	if (count of errs) &gt; 0 then
+		set AppleScript's text item delimiters to return
+		set etext to errs as text
+		set AppleScript's text item delimiters to ""
+		display alert "Не удалось сконвертировать" message etext as warning
+	end if
+
+	return input
+end run
+
+on doImages(flist, SIPS)
+	set names to {"PNG", "JPEG", "HEIC", "TIFF", "GIF", "BMP", "PDF"}
+	set choice to (choose from list names with title ("Convert · Картинки (" &amp; (count flist) &amp; ")") with prompt "В какой формат?" default items {"JPEG"})
+	if choice is false then return {0, {}}
+	set target to item 1 of choice
+	if target is "PNG" then
+		set sf to "png"
+		set ex to "png"
+		set extra to ""
+	else if target is "JPEG" then
+		set sf to "jpeg"
+		set ex to "jpg"
+		set extra to " -s formatOptions 85"
+	else if target is "HEIC" then
+		set sf to "heic"
+		set ex to "heic"
+		set extra to " -s formatOptions 80"
+	else if target is "TIFF" then
+		set sf to "tiff"
+		set ex to "tiff"
+		set extra to ""
+	else if target is "GIF" then
+		set sf to "gif"
+		set ex to "gif"
+		set extra to ""
+	else if target is "BMP" then
+		set sf to "bmp"
+		set ex to "bmp"
+		set extra to ""
+	else
+		set sf to "pdf"
+		set ex to "pdf"
+		set extra to ""
+	end if
+	set okc to 0
+	set errs to {}
+	set progress description to "Convert · Картинки"
+	repeat with p in flist
+		set pp to contents of p
+		set progress additional description to (my baseName(pp)) &amp; "  →  " &amp; target
+		set outp to my uniqueOut(my dirOf(pp), my baseOf(pp), ex)
+		try
+			do shell script SIPS &amp; " -s format " &amp; sf &amp; extra &amp; " " &amp; quoted form of pp &amp; " --out " &amp; quoted form of outp
+			set okc to okc + 1
+		on error errMsg
+			set end of errs to (my baseName(pp)) &amp; " -&gt; " &amp; target
+		end try
+		set gDone to gDone + 1
+		set progress completed steps to gDone
+	end repeat
+	return {okc, errs}
+end doImages
+
+on doAudios(flist, FF)
+	set names to {"MP3", "M4A (AAC)", "WAV", "FLAC", "AIFF", "OGG (Opus)"}
+	set choice to (choose from list names with title ("Convert · Аудио (" &amp; (count flist) &amp; ")") with prompt "В какой формат?" default items {"MP3"})
+	if choice is false then return {0, {}}
+	set target to item 1 of choice
+	if target is "MP3" then
+		set args to "-c:a libmp3lame -b:a 192k"
+		set ex to "mp3"
+	else if target is "M4A (AAC)" then
+		set args to "-c:a aac -b:a 192k"
+		set ex to "m4a"
+	else if target is "WAV" then
+		set args to "-c:a pcm_s16le"
+		set ex to "wav"
+	else if target is "FLAC" then
+		set args to "-c:a flac"
+		set ex to "flac"
+	else if target is "AIFF" then
+		set args to "-c:a pcm_s16be"
+		set ex to "aiff"
+	else
+		set args to "-c:a libopus -b:a 192k"
+		set ex to "ogg"
+	end if
+	set okc to 0
+	set errs to {}
+	set progress description to "Convert · Аудио"
+	repeat with p in flist
+		set pp to contents of p
+		set progress additional description to (my baseName(pp)) &amp; "  →  " &amp; target
+		set outp to my uniqueOut(my dirOf(pp), my baseOf(pp), ex)
+		try
+			do shell script FF &amp; " -y -v error -i " &amp; quoted form of pp &amp; " " &amp; args &amp; " " &amp; quoted form of outp
+			set okc to okc + 1
+		on error errMsg
+			set end of errs to (my baseName(pp)) &amp; " -&gt; " &amp; target
+		end try
+		set gDone to gDone + 1
+		set progress completed steps to gDone
+	end repeat
+	return {okc, errs}
+end doAudios
+
+on doVideos(flist, FF)
+	set names to {"MP4 (H.264)", "MOV", "WEBM (VP9)", "MKV", "GIF (анимация)", "Извлечь аудио -&gt; MP3", "Извлечь аудио -&gt; M4A"}
+	set choice to (choose from list names with title ("Convert · Видео (" &amp; (count flist) &amp; ")") with prompt "В какой формат?" default items {"MP4 (H.264)"})
+	if choice is false then return {0, {}}
+	set target to item 1 of choice
+
+	set scaleArg to ""
+	set isVideoOut to (target is "MP4 (H.264)") or (target is "MOV") or (target is "WEBM (VP9)") or (target is "MKV")
+	if isVideoOut then
+		set scaleArg to my chooseScale()
+		if scaleArg is missing value then return {0, {}}
+	end if
+
+	if target is "MP4 (H.264)" then
+		set args to "-c:v libx264 -crf 23 -preset medium -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart"
+		set ex to "mp4"
+	else if target is "MOV" then
+		set args to "-c:v libx264 -crf 23 -preset medium -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart"
+		set ex to "mov"
+	else if target is "WEBM (VP9)" then
+		set args to "-c:v libvpx-vp9 -crf 32 -b:v 0 -c:a libopus -b:a 192k"
+		set ex to "webm"
+	else if target is "MKV" then
+		set args to "-c:v libx264 -crf 23 -preset medium -c:a aac -b:a 192k"
+		set ex to "mkv"
+	else if target is "GIF (анимация)" then
+		set args to "-vf fps=12,scale=480:-1:flags=lanczos -loop 0"
+		set ex to "gif"
+	else if target is "Извлечь аудио -&gt; MP3" then
+		set args to "-vn -c:a libmp3lame -b:a 192k"
+		set ex to "mp3"
+	else
+		set args to "-vn -c:a aac -b:a 192k"
+		set ex to "m4a"
+	end if
+
+	set okc to 0
+	set errs to {}
+	set progress description to "Convert · Видео"
+	repeat with p in flist
+		set pp to contents of p
+		set progress additional description to (my baseName(pp)) &amp; "  →  " &amp; target
+		set outp to my uniqueOut(my dirOf(pp), my baseOf(pp), ex)
+		try
+			do shell script FF &amp; " -y -v error -i " &amp; quoted form of pp &amp; scaleArg &amp; " " &amp; args &amp; " " &amp; quoted form of outp
+			set okc to okc + 1
+		on error errMsg
+			set end of errs to (my baseName(pp)) &amp; " -&gt; " &amp; target
+		end try
+		set gDone to gDone + 1
+		set progress completed steps to gDone
+	end repeat
+	return {okc, errs}
+end doVideos
+
+on chooseScale()
+	set opts to {"Оригинал", "480p", "720p", "1080p", "1440p (2K)", "2160p (4K)", "Свой размер..."}
+	set c to (choose from list opts with title "Разрешение" with prompt "Масштабировать видео?" default items {"Оригинал"})
+	if c is false then return missing value
+	set r to item 1 of c
+	if r is "Оригинал" then return ""
+	if r is "480p" then return " -vf scale=-2:480"
+	if r is "720p" then return " -vf scale=-2:720"
+	if r is "1080p" then return " -vf scale=-2:1080"
+	if r is "1440p (2K)" then return " -vf scale=-2:1440"
+	if r is "2160p (4K)" then return " -vf scale=-2:2160"
+	set t to ""
+	try
+		set t to text returned of (display dialog "Высота в px (напр. 720) или ШИРИНАxВЫСОТА (напр. 1280x720):" default answer "1280x720" with title "Свой размер")
+	on error
+		return missing value
+	end try
+	set t to my trimSpace(t)
+	if t is "" then return ""
+	set t to my replaceText(t, "X", "x")
+	if t contains "x" then
+		set AppleScript's text item delimiters to "x"
+		set parts to text items of t
+		set AppleScript's text item delimiters to ""
+		set w to my trimSpace(item 1 of parts)
+		set h to my trimSpace(item 2 of parts)
+		return " -vf scale=" &amp; w &amp; ":" &amp; h
+	else
+		return " -vf scale=-2:" &amp; t
+	end if
+end chooseScale
+
+on extOf(p)
+	set nm to my baseName(p)
+	if nm contains "." then
+		set AppleScript's text item delimiters to "."
+		set parts to text items of nm
+		set AppleScript's text item delimiters to ""
+		return item -1 of parts
+	else
+		return ""
+	end if
+end extOf
+
+on baseName(p)
+	set AppleScript's text item delimiters to "/"
+	set c to last text item of p
+	set AppleScript's text item delimiters to ""
+	return c
+end baseName
+
+on baseOf(p)
+	set nm to my baseName(p)
+	if nm contains "." then
+		set AppleScript's text item delimiters to "."
+		set parts to text items of nm
+		if (count of parts) &lt; 2 then
+			set AppleScript's text item delimiters to ""
+			return nm
+		end if
+		set r to (items 1 thru -2 of parts) as text
+		set AppleScript's text item delimiters to ""
+		if r is "" then return nm
+		return r
+	else
+		return nm
+	end if
+end baseOf
+
+on dirOf(p)
+	set AppleScript's text item delimiters to "/"
+	set parts to text items of p
+	if (count of parts) &lt; 2 then
+		set AppleScript's text item delimiters to ""
+		return "."
+	end if
+	set r to (items 1 thru -2 of parts) as text
+	set AppleScript's text item delimiters to ""
+	if r is "" then return "/"
+	return r
+end dirOf
+
+on uniqueOut(dir, base, ex)
+	set p to dir &amp; "/" &amp; base &amp; "." &amp; ex
+	set n to 2
+	repeat while my pathExists(p)
+		set p to dir &amp; "/" &amp; base &amp; " " &amp; (n as text) &amp; "." &amp; ex
+		set n to n + 1
+	end repeat
+	return p
+end uniqueOut
+
+on pathExists(p)
+	try
+		do shell script "test -e " &amp; quoted form of p
+		return true
+	on error
+		return false
+	end try
+end pathExists
+
+on notify(t, m)
+	try
+		display notification m with title t sound name "Glass"
+	end try
+end notify
+
+on trimSpace(s)
+	repeat while s is not "" and (character 1 of s is in {" ", tab})
+		set s to text 2 thru -1 of s
+	end repeat
+	repeat while s is not "" and (character -1 of s is in {" ", tab})
+		set s to text 1 thru -2 of s
+	end repeat
+	return s
+end trimSpace
+
+on replaceText(s, findT, replaceT)
+	set AppleScript's text item delimiters to findT
+	set parts to text items of s
+	set AppleScript's text item delimiters to replaceT
+	set r to parts as text
+	set AppleScript's text item delimiters to ""
+	return r
+end replaceText
+
+on findFFmpeg()
+	repeat with c in {"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg"}
+		try
+			do shell script "test -x " &amp; quoted form of (contents of c)
+			return (contents of c)
+		end try
+	end repeat
+	try
+		return (do shell script "/usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin command -v ffmpeg")
+	on error
+		return missing value
+	end try
+end findFFmpeg
+</string>
+				</dict>
+				<key>BundleIdentifier</key>
+				<string>com.apple.Automator.RunScript</string>
+				<key>CFBundleVersion</key>
+				<string>1.0.2</string>
+				<key>CanShowSelectedItemsWhenRun</key>
+				<false/>
+				<key>CanShowWhenRun</key>
+				<true/>
+				<key>Category</key>
+				<array>
+					<string>AMCategoryUtilities</string>
+				</array>
+				<key>Class Name</key>
+				<string>RunScriptAction</string>
+				<key>InputUUID</key>
+				<string>A1B2C3D4-0001-4000-8000-000000000001</string>
+				<key>Keywords</key>
+				<array>
+					<string>Run</string>
+				</array>
+				<key>OutputUUID</key>
+				<string>A1B2C3D4-0002-4000-8000-000000000002</string>
+				<key>UUID</key>
+				<string>A1B2C3D4-0003-4000-8000-000000000003</string>
+				<key>UnlocalizedApplications</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>arguments</key>
+				<dict>
+					<key>0</key>
+					<dict>
+						<key>default value</key>
+						<string></string>
+						<key>name</key>
+						<string>source</string>
+						<key>required</key>
+						<string>0</string>
+						<key>type</key>
+						<string>0</string>
+						<key>uuid</key>
+						<string>0</string>
+					</dict>
+				</dict>
+				<key>isViewVisible</key>
+				<integer>1</integer>
+				<key>location</key>
+				<string>309.000000:305.000000</string>
+				<key>nibPath</key>
+				<string>/System/Library/Automator/Run AppleScript.action/Contents/Resources/Base.lproj/main.nib</string>
+			</dict>
+			<key>isViewVisible</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>connectors</key>
+	<dict/>
+	<key>workflowMetaData</key>
+	<dict>
+		<key>applicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>applicationBundleIDsByPath</key>
+		<dict>
+			<key>/System/Library/CoreServices/Finder.app</key>
+			<string>com.apple.finder</string>
+		</dict>
+		<key>applicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>applicationPaths</key>
+		<array>
+			<string>/System/Library/CoreServices/Finder.app</string>
+		</array>
+		<key>inputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject</string>
+		<key>outputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>presentationMode</key>
+		<integer>15</integer>
+		<key>processesInput</key>
+		<false/>
+		<key>serviceApplicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>serviceApplicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>serviceInputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject</string>
+		<key>serviceOutputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>serviceProcessesInput</key>
+		<false/>
+		<key>systemImageName</key>
+		<string>wand.and.stars</string>
+		<key>useAutomaticInputType</key>
+		<false/>
+		<key>workflowTypeIdentifier</key>
+		<string>com.apple.Automator.servicesMenu</string>
+	</dict>
+</dict>
+</plist>
