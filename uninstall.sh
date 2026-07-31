@@ -3,9 +3,9 @@
 set -e
 DEST="$HOME/Library/Services"
 
-rm -rf "$DEST/Convert.workflow" "$DEST/ZIP.workflow"
+rm -rf "$DEST/Convert.workflow" "$DEST/ZIP.workflow" "$DEST/FileTools.workflow" "$DEST/QR.workflow"
 
 /System/Library/CoreServices/pbs -flush 2>/dev/null || true
 killall Finder 2>/dev/null || true
 
-echo "🧹 Removed Convert + ZIP quick actions."
+echo "🧹 Removed Convert + ZIP + File Tools + QR quick actions."

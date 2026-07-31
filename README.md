@@ -7,6 +7,7 @@ A small collection of polished **macOS Finder Quick Actions** — the items that
 | 🪄 **[Convert](Convert/)** | Right-click any image / audio / video → pick a target format from a native dropdown → converted file appears next to the original. Batch, per-type menus for mixed selections, a resolution picker for video, a live progress bar, and collision-safe names. | `sips` (images) + `ffmpeg` (A/V) |
 | 🗄️ **[ZIP](ZIP/)** | Right-click file(s)/folder(s) → zipped with `zip -r`. One item → its own `.zip`; many → prompts for one archive name. No macOS junk (`__MACOSX`, `.DS_Store`), never overwrites. | `zip` (built-in) |
 | 🧰 **[File Tools](FileTools/)** | Right-click any file/folder → one menu: **Copy path** (POSIX / `file://` / name), **Checksum** (SHA-256/1, MD5, verify), **New file here**, **Rename batch** (prefix/suffix/numbering/replace). Collision-safe, no dependencies. | built-in (`shasum`, `pbcopy`, `mv`…) |
+| ▪️ **[QR](QR/)** | No menu — click an **image with a QR** and it's decoded automatically (text → clipboard, http/https opens in the browser); click a **text file** (`.txt`/`.md`/…) and its contents become a QR; click anything else and you **type** what to encode. Generated codes land **in the clipboard as an image** and open in Preview to copy/share. No dependencies. | built-in (CoreImage + Vision) |
 
 Each action has a **custom icon** in the right-click menu and adapts to light/dark mode.
 
@@ -34,9 +35,11 @@ cd awesome-quick-actions
 ```sh
 ./Convert/install.sh      # or
 ./ZIP/install.sh
+./FileTools/install.sh
+./QR/install.sh
 ```
 
-**No terminal?** Double-click `Convert/Convert.workflow` (or `ZIP/ZIP.workflow`) in Finder and confirm **Install**. They land in `~/Library/Services/`.
+**No terminal?** Double-click `Convert/Convert.workflow` (or any other `*.workflow`) in Finder and confirm **Install**. They land in `~/Library/Services/`.
 
 > After installing, right-click a file in Finder → **Quick Actions** (or the **⚙︎ Quick Actions** menu). If an action doesn't show up immediately, re-open the menu or log out/in once.
 
@@ -45,7 +48,7 @@ cd awesome-quick-actions
 ```sh
 ./uninstall.sh
 ```
-…or just delete `~/Library/Services/Convert.workflow` and `~/Library/Services/ZIP.workflow`.
+…or just delete the matching bundles in `~/Library/Services/` (`Convert.workflow`, `ZIP.workflow`, `FileTools.workflow`, `QR.workflow`).
 
 ---
 
@@ -63,7 +66,9 @@ awesome-quick-actions/
 │   ├── src/zip.sh
 │   ├── install.sh
 │   └── README.md
-├── install.sh                # installs both
+├── FileTools/                # Copy path / Checksum / New file / Rename batch
+├── QR/                       # Create QR (text/URL) / Decode QR (from image)
+├── install.sh                # installs all of them
 └── uninstall.sh
 ```
 
