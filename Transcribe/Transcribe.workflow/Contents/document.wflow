@@ -60,6 +60,8 @@ use framework "AppKit"
 use scripting additions
 
 property gDone : 0
+property gUIResult : "FAILED"
+property gUICount : 0
 
 on run {input, parameters}
 	set FF to my findFFmpeg()
@@ -225,19 +227,11 @@ on run {input, parameters}
 				end if
 			else
 				set outp to my uniqueOut(my dirOf(srcPath), my baseOf(srcPath), "txt")
-				set fh to missing value
-				try
-					set fh to open for access (POSIX file outp) with write permission
-					set eof of fh to 0
-					write txt to fh as «class utf8»
-					close access fh
+				if my writeUTF8(outp, txt) then
 					set okc to okc + 1
-				on error
-					try
-						if fh is not missing value then close access fh
-					end try
+				else
 					set end of errs to my baseName(srcPath) &amp; " — не удалось записать .txt"
-				end try
+				end if
 			end if
 			set gDone to gDone + 1
 			set progress completed steps to gDone
@@ -410,21 +404,44 @@ on engineArgsFor(lang, assetDir, wantTimestamps)
 end engineArgsFor
 
 on askLangAndTimestamps(n)
-	-- Native NSAlert with a language popup and a "Таймкоды" checkbox. NSAlert
-	-- must run on the main thread (true here: AppleScript/Automator's "Run
-	-- AppleScript" action runs single-threaded on the main thread) and can
-	-- in principle fail to construct or run -- guard it and fall back to the
-	-- old `choose from list` (language only, timestamps forced off) rather
-	-- than let the whole action die because it could not ask the question.
+	-- Native NSAlert with a language popup and a "Таймкоды" checkbox.
+	--
+	-- Automator's "Run AppleScript" action does NOT run the script on the main
+	-- thread. An earlier version assumed it did and simply called the alert
+	-- inline; every real run then failed with -10000 "NSWindow should only be
+	-- instantiated on the main thread!" and silently fell back to the plain
+	-- list, so the checkbox never appeared. NSAlert creates an NSWindow, so it
+	-- must be hopped onto the main thread explicitly.
+	--
+	-- The result travels through a property because performSelectorOnMainThread
+	-- cannot return a value.
+	set my gUICount to n
+	set my gUIResult to "FAILED"
 	try
-		set uiResult to my showTranscribeAlert(n)
-		return uiResult
-	on error
-		set langChoice to (choose from list {"Русский", "English"} with title ("Transcribe (" &amp; n &amp; ")") with prompt "Язык записи:" default items {"Русский"})
-		if langChoice is false then return missing value
-		return {lang:(item 1 of langChoice), timestamps:false}
+		my performSelectorOnMainThread:"showAlertOnMain:" withObject:(missing value) waitUntilDone:true
 	end try
+
+	if my gUIResult is "CANCELLED" then return missing value
+	if my gUIResult is not "FAILED" then return my gUIResult
+
+	-- Last resort: ask a plainer question rather than let the action die.
+	set langChoice to (choose from list {"Русский", "English"} with title ("Transcribe (" &amp; n &amp; ")") with prompt "Язык записи:" default items {"Русский"})
+	if langChoice is false then return missing value
+	return {lang:(item 1 of langChoice), timestamps:false}
 end askLangAndTimestamps
+
+on showAlertOnMain:sender
+	try
+		set r to my showTranscribeAlert(my gUICount)
+		if r is missing value then
+			set my gUIResult to "CANCELLED"
+		else
+			set my gUIResult to r
+		end if
+	on error
+		set my gUIResult to "FAILED"
+	end try
+end showAlertOnMain:
 
 on showTranscribeAlert(n)
 	set alertObj to current application's NSAlert's alloc()'s init()
@@ -454,6 +471,33 @@ on showTranscribeAlert(n)
 	set cbState to (cb's state()) as integer
 	return {lang:selLang, timestamps:(cbState is 1)}
 end showTranscribeAlert
+
+-- Write UTF-8 via NSString rather than `open for access`.
+-- `use framework` puts this script in AppleScriptObjC mode, where the bare
+-- `POSIX file` term resolves against the ObjC bridge and fails with
+-- -1700 "Can't make current application into type «class fsrf»". That broke
+-- every .txt write the moment the NSAlert dialog introduced the framework
+-- imports. NSString's writeToFile is atomic and needs no file handle, so
+-- there is nothing to leak on failure either.
+on writeUTF8(outp, txt)
+	try
+		set ns to current application's NSString's stringWithString:txt
+		-- `do shell script` hands back its output with CR line endings, so the
+		-- engine's LF-separated lines arrive here as CR. That went unnoticed
+		-- while a transcript was a single paragraph; with --timestamps it is
+		-- many lines, and a CR-only .txt reads as one long line in most
+		-- editors. Normalise CRLF and CR back to LF before writing.
+		set ns to ns's stringByReplacingOccurrencesOfString:(character id 13 &amp; character id 10) withString:(character id 10)
+		set ns to ns's stringByReplacingOccurrencesOfString:(character id 13) withString:(character id 10)
+		if not ((ns's hasSuffix:(character id 10)) as boolean) then
+			set ns to ns's stringByAppendingString:(character id 10)
+		end if
+		set ok to ns's writeToFile:outp atomically:true encoding:(current application's NSUTF8StringEncoding) |error|:(missing value)
+		return (ok as boolean)
+	on error
+		return false
+	end try
+end writeUTF8
 
 on engineErrorLines(errBlob)
 	set outLines to {}
