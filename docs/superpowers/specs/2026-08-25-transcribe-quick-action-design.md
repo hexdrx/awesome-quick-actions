@@ -87,8 +87,36 @@ English-only users download nothing from us.
   before invoking `transcribe-ru`.
 
 Each binary takes a **list** of WAVs and is invoked **once per batch**, not once
-per file. Model load costs seconds; paying it per file makes a ten-file batch
-needlessly painful.
+per file. The recognizer — and for Russian, the VAD — is constructed once and
+reused across every file in the selection. Model load costs seconds; paying it
+per file makes a ten-file batch needlessly painful.
+
+### Progress reporting
+
+The binaries emit line-oriented progress on **stderr**; transcripts go to
+stdout, so the two never interleave. AppleScript parses stderr and drives a
+native progress bar, the same one Convert uses.
+
+```
+PROGRESS <phase> <done> <total> [<detail>]
+```
+
+Phases, in order:
+
+| Phase | Counted in | Shown as |
+|---|---|---|
+| `download` | bytes | "Загрузка модели…" (first Russian run only) |
+| `decode` | files | "Подготовка N из M" |
+| `transcribe` | VAD segments within the current file | "Файл N из M — %" |
+
+Segment-level granularity matters: a single hour-long recording would otherwise
+sit at 0 % until it finished. `total` for `transcribe` is known once the VAD has
+segmented the current file, so the bar is determinate from the moment
+recognition starts on it.
+
+`decode` is driven by AppleScript around its own `ffmpeg` calls; `download` and
+`transcribe` come from the binaries. The overall bar spans the whole batch, not
+one file.
 
 ## Data flow
 
