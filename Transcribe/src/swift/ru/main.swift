@@ -1,6 +1,6 @@
 // Transcribe/src/swift/ru/main.swift
 // Russian transcription via sherpa-onnx + GigaAM v3 e2e RNN-T.
-// Usage: transcribe-ru --models <dir> <wav>...
+// Usage: transcribe-ru --models <dir> [--timestamps] <wav>...
 //
 // Exit codes (shared contract with transcribe-en):
 //   0 - every input file transcribed successfully
@@ -26,9 +26,15 @@ func note(_ line: String) {
   FileHandle.standardError.write(Data((line + "\n").utf8))
 }
 
+// Set to opt into "DEBUG CHUNK <start> <end>" lines on stderr, one per decode
+// chunk per file, so tests can observe chunk bounds without touching the
+// stdout contract.
+let debugChunks = ProcessInfo.processInfo.environment["TRANSCRIBE_RU_DEBUG_CHUNKS"] == "1"
+
 // ---- arguments ----
 var modelsDir = ""
 var wavs: [String] = []
+var emitTimestamps = false
 var args = Array(CommandLine.arguments.dropFirst())
 while let a = args.first {
   args.removeFirst()
@@ -36,11 +42,15 @@ while let a = args.first {
     guard let v = args.first else { die("--models needs a value") }
     modelsDir = v
     args.removeFirst()
+  } else if a == "--timestamps" {
+    emitTimestamps = true
   } else {
     wavs.append(a)
   }
 }
-if modelsDir.isEmpty || wavs.isEmpty { die("usage: transcribe-ru --models <dir> <wav>...") }
+if modelsDir.isEmpty || wavs.isEmpty {
+  die("usage: transcribe-ru --models <dir> [--timestamps] <wav>...")
+}
 
 // ---- recognizer, built once for the whole batch ----
 let transducer = sherpaOnnxOfflineTransducerModelConfig(
@@ -68,13 +78,120 @@ var silero = sherpaOnnxSileroVadModelConfig(
   maxSpeechDuration: 20.0)
 var vadConfig = sherpaOnnxVadModelConfig(sileroVad: silero)
 
-// Padding applied around each VAD segment before decoding. silero reports speech
-// onset 0.1-0.3s late and swallows the first syllable of every segment; unpadded,
-// the fixture transcribes as "чьих не требуя похвал" instead of "Ничьих не требуя
-// похвал". Lead/tail pads are clamped against neighbouring segment bounds so that
-// padded windows never overlap and duplicate words.
-let leadPad = 4800  // 0.30s @ 16kHz
-let tailPad = 3200  // 0.20s @ 16kHz
+let sampleRate = 16000
+let maxChunkSamples = sampleRate * 20  // keep chunks under GigaAM's own 22.0s max_duration
+
+// VAD is used only to decide WHERE to cut, never what to keep: it locates the
+// pauses between speech segments, and each cut lands on the MIDPOINT of a
+// pause so that no audio is ever discarded. Chunks tile the file exactly —
+// chunk n+1 always starts at the sample where chunk n ended — so there is no
+// onset-clipping seam to pad around any more (that defect only existed
+// because VAD segments used to be decoded in isolation, each missing the
+// syllable straddling its own boundary).
+func computeChunks(sampleCount: Int, speechBounds: [(start: Int, end: Int)]) -> [(start: Int, end: Int)] {
+  guard sampleCount > 0 else { return [] }
+
+  // Candidate cut points: the midpoint of every real gap between consecutive
+  // speech segments, in ascending order (VAD emits segments in file order).
+  var candidates: [Int] = []
+  for n in 1..<max(speechBounds.count, 1) where n < speechBounds.count {
+    let gapStart = speechBounds[n - 1].end
+    let gapEnd = speechBounds[n].start
+    if gapEnd > gapStart {
+      candidates.append((gapStart + gapEnd) / 2)
+    }
+  }
+
+  var chunks: [(start: Int, end: Int)] = []
+  var pos = 0
+  while pos < sampleCount {
+    let remaining = sampleCount - pos
+    if remaining <= maxChunkSamples {
+      // What's left already fits in one chunk: this is the final chunk, and
+      // it runs to the last sample regardless of any candidate inside it.
+      chunks.append((pos, sampleCount))
+      break
+    }
+    let limit = pos + maxChunkSamples
+    let inRange = candidates.filter { $0 > pos && $0 <= limit }
+    let cut = inRange.max() ?? limit
+    chunks.append((pos, cut))
+    pos = cut
+  }
+  return chunks
+}
+
+// ---- --timestamps: group a chunk's tokens into sentences ----
+// GigaAM's vocabulary is SentencePiece BPE: a token beginning with "▁" starts
+// a new word (the marker becomes a space); any other token — including
+// punctuation like "." "," "?" "!" — attaches directly to what precedes it.
+// A sentence ends on ".", "!" or "?"; its reported time is its first token's
+// timestamp (chunk-relative, from the recognizer) plus the chunk's start
+// offset in seconds.
+struct TimedSentence { let time: Float; let text: String }
+
+func isTerminalPunct(_ tok: String) -> Bool { tok == "." || tok == "!" || tok == "?" }
+
+func sentences(from result: SherpaOnnxOfflineRecognitionResult, chunkOffsetSeconds: Float) -> [TimedSentence] {
+  let n = result.count
+  guard n > 0, let tokensArr = result.result.pointee.tokens_arr else { return [] }
+  let ts = result.timestamps
+
+  // Decode every token string up front so a terminal-punctuation token can
+  // peek at its successor (needed to keep a run like "..." — three separate
+  // "." tokens — as one sentence-ending marker instead of splitting it into
+  // spurious punctuation-only "sentences").
+  var toks: [String] = []
+  toks.reserveCapacity(n)
+  for idx in 0..<n {
+    toks.append(tokensArr[idx].map { String(cString: $0) } ?? "")
+  }
+
+  var out: [TimedSentence] = []
+  var buffer = ""
+  var sentenceStart: Float? = nil
+
+  for idx in 0..<n {
+    let tok = toks[idx]
+    if tok.isEmpty { continue }
+    let time = (idx < ts.count ? ts[idx] : 0) + chunkOffsetSeconds
+    if sentenceStart == nil { sentenceStart = time }
+
+    if tok == "▁" {
+      buffer += " "
+    } else if tok.hasPrefix("▁") {
+      buffer += " " + tok.dropFirst()
+    } else {
+      buffer += tok
+    }
+
+    if isTerminalPunct(tok) {
+      let nextIsTerminal = idx + 1 < n && isTerminalPunct(toks[idx + 1])
+      if !nextIsTerminal {
+        let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A punctuation-only buffer (no letter or digit) is not a real
+        // sentence — drop it rather than emit a line like "[00:13] .".
+        if !text.isEmpty, text.rangeOfCharacter(from: .alphanumerics) != nil, let start = sentenceStart {
+          out.append(TimedSentence(time: start, text: text))
+        }
+        buffer = ""
+        sentenceStart = nil
+      }
+    }
+  }
+  let rest = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+  if !rest.isEmpty, rest.rangeOfCharacter(from: .alphanumerics) != nil, let start = sentenceStart {
+    out.append(TimedSentence(time: start, text: rest))
+  }
+  return out
+}
+
+func formatTimestamp(_ seconds: Float) -> String {
+  let total = Int(seconds.rounded(.down))
+  let mm = max(0, total) / 60
+  let ss = max(0, total) % 60
+  return String(format: "%02d:%02d", mm, ss)
+}
 
 var failed = false
 
@@ -100,48 +217,40 @@ for (i, path) in wavs.enumerated() {
     }
     vad.flush()
 
-    // Drain raw segment bounds first (sample indices), so padding for each segment
-    // can be clamped against its neighbours before any decoding happens.
-    var bounds: [(start: Int, end: Int)] = []
+    var speechBounds: [(start: Int, end: Int)] = []
     while !vad.isEmpty() {
       let seg = vad.front()
-      bounds.append((seg.start, seg.start + seg.n))
+      speechBounds.append((seg.start, seg.start + seg.n))
       vad.pop()
     }
 
-    // Silence, or audio the VAD rejected wholesale: fall back to the whole file
-    // rather than emitting nothing.
-    if bounds.isEmpty && !samples.isEmpty { bounds = [(0, samples.count)] }
-
-    // Two passes so the clamps are mutually aware and padded windows can touch
-    // but never overlap: onset clipping is the defect we actually measured, so
-    // the lead pad is never shortened to make room for a tail pad (which is a
-    // speculative safety margin, not a measured defect). Pass 1 computes each
-    // window's start against the PREVIOUS window's raw bound; pass 2 computes
-    // each window's end against the NEXT window's already-computed (padded)
-    // start, guaranteeing starts[n+1] >= ends[n].
-    var starts: [Int] = []
-    for (n, b) in bounds.enumerated() {
-      let prevEnd = n > 0 ? bounds[n - 1].end : 0
-      starts.append(max(prevEnd, max(0, b.start - leadPad)))
-    }
-    var ends: [Int] = []
-    for (n, b) in bounds.enumerated() {
-      let nextStart = n + 1 < bounds.count ? starts[n + 1] : samples.count
-      ends.append(min(nextStart, min(samples.count, b.end + tailPad)))
-    }
+    let chunks = computeChunks(sampleCount: samples.count, speechBounds: speechBounds)
 
     var parts: [String] = []
-    for n in 0..<bounds.count {
-      let text = recognizer.decode(samples: [Float](samples[starts[n]..<ends[n]])).text
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-      if !text.isEmpty { parts.append(text) }
-      note("PROGRESS transcribe \(n + 1) \(bounds.count) \(base)")
+    var timedSentences: [TimedSentence] = []
+
+    for (n, chunk) in chunks.enumerated() {
+      let result = recognizer.decode(samples: [Float](samples[chunk.start..<chunk.end]))
+      if emitTimestamps {
+        timedSentences.append(
+          contentsOf: sentences(from: result, chunkOffsetSeconds: Float(chunk.start) / Float(sampleRate)))
+      } else {
+        let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { parts.append(text) }
+      }
+      if debugChunks { note("DEBUG CHUNK \(chunk.start) \(chunk.end)") }
+      note("PROGRESS transcribe \(n + 1) \(chunks.count) \(base)")
     }
-    if bounds.isEmpty { note("PROGRESS transcribe 1 1 \(base)") }
+    if chunks.isEmpty { note("PROGRESS transcribe 1 1 \(base)") }
 
     print("=== FILE \(i + 1) ===")
-    print(parts.joined(separator: " "))
+    if emitTimestamps {
+      for s in timedSentences {
+        print("[\(formatTimestamp(s.time))] \(s.text)")
+      }
+    } else {
+      print(parts.joined(separator: " "))
+    }
     print("")
   } catch {
     failed = true
