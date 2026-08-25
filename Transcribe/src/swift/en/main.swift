@@ -109,19 +109,27 @@ func transcribe(_ path: String, using transcriber: SpeechTranscriber) async thro
 }
 
 @available(macOS 26.0, *)
-func run() async {
-  let wavs = Array(CommandLine.arguments.dropFirst())
-  if wavs.isEmpty { die("usage: transcribe-en <wav>...") }
-
-  let transcriber = SpeechTranscriber(
+func makeTranscriber() -> SpeechTranscriber {
+  SpeechTranscriber(
     locale: Locale(identifier: "en-US"),
     transcriptionOptions: [],
     reportingOptions: [],
     attributeOptions: [])
+}
+
+@available(macOS 26.0, *)
+func run() async {
+  let wavs = Array(CommandLine.arguments.dropFirst())
+  if wavs.isEmpty { die("usage: transcribe-en <wav>...") }
 
   // The en-US asset is absent on a fresh machine; installedLocales is empty.
+  // Requested once, up front, against a throwaway transcriber instance --
+  // the asset itself is a one-time, Apple-side download keyed on the
+  // locale, not on any particular SpeechTranscriber object, so this does
+  // not need to (and must not) repeat per file below.
   do {
-    if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+    let bootstrap = makeTranscriber()
+    if let request = try await AssetInventory.assetInstallationRequest(supporting: [bootstrap]) {
       note("PROGRESS download 0 1 en-US")
       try await request.downloadAndInstall()
       note("PROGRESS download 1 1 en-US")
@@ -134,7 +142,14 @@ func run() async {
   for (i, path) in wavs.enumerated() {
     let base = URL(fileURLWithPath: path).lastPathComponent
     do {
-      let text = try await transcribe(path, using: transcriber)
+      // A FRESH SpeechTranscriber per file, not one reused across the whole
+      // batch: a SpeechTranscriber instance cannot be driven by a second
+      // SpeechAnalyzer run -- Speech.framework hits an internal
+      // precondition and the process dies with SIGTRAP (exit 133) on the
+      // second file, discarding every transcript already produced in the
+      // batch (stdout is block-buffered on a pipe). Constructing the
+      // transcriber is cheap; it does not re-touch the installed asset.
+      let text = try await transcribe(path, using: makeTranscriber())
       note("PROGRESS transcribe 1 1 \(base)")
       print("=== FILE \(i + 1) ===")
       print(text)

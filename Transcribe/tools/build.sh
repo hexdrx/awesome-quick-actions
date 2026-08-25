@@ -37,11 +37,11 @@ if [ ! -f "$SDK/.ok" ]; then
   touch "$SDK/.ok"
 fi
 
-CAPI=$(find "$SDK" -name c-api.h -path '*sherpa-onnx*' | head -1)
+CAPI=$(find "$SDK" -name c-api.h -path '*sherpa-onnx*' -print -quit)
 [ -n "$CAPI" ] || { echo "c-api.h not found in $SDK" >&2; exit 1; }
 INC=$(dirname "$(dirname "$(dirname "$CAPI")")")
 
-CAPI_LIB=$(find "$SDK" -name 'libsherpa-onnx-c-api.a' | head -1)
+CAPI_LIB=$(find "$SDK" -name 'libsherpa-onnx-c-api.a' -print -quit)
 [ -n "$CAPI_LIB" ] || { echo "libsherpa-onnx-c-api.a not found in $SDK" >&2; exit 1; }
 LIBDIR=$(dirname "$CAPI_LIB")
 LIBS=$(cd "$LIBDIR" && ls *.a | sed 's/^lib/-l/; s/\.a$//' | tr '\n' ' ')

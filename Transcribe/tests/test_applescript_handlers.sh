@@ -98,6 +98,26 @@ end if
 set unrelated to (eng's rewriteErrorLines({"не удалось скачать encoder.int8.onnx"}, tempWavs, origFiles))
 my assertEq(item 1 of unrelated, "не удалось скачать encoder.int8.onnx", "rewriteErrorLines passes through a line naming no known temp WAV")
 
+-- nonProgressLines: the last-resort hard-failure fallback used when the
+-- engine died without emitting a single ERROR line (e.g. a crash) -- must
+-- strip PROGRESS chatter but keep everything else, including a line that
+-- happens not to start with "ERROR" at all (a raw crash message).
+set crashBlob to "PROGRESS download 0 1 en-US" & return & "PROGRESS download 1 1 en-US" & return & "PROGRESS transcribe 1 1 transcribe_9f3ac21b.wav"
+set npLines to (eng's nonProgressLines(crashBlob))
+my assertEq((count of npLines), 0, "nonProgressLines drops an all-PROGRESS blob entirely")
+
+set mixedBlob to "PROGRESS transcribe 1 1 a.wav" & return & "Fatal error: something crashed" & return & "PROGRESS download 1 1 x"
+set mixedLines to (eng's nonProgressLines(mixedBlob))
+my assertEq((count of mixedLines), 1, "nonProgressLines keeps the one non-PROGRESS line")
+my assertEq(item 1 of mixedLines, "Fatal error: something crashed", "nonProgressLines keeps the line verbatim")
+my assertEq((count of (eng's nonProgressLines(""))), 0, "nonProgressLines on an empty string")
+
+-- majorVersionOf: used to gate English on macOS 26+ (transcribe-en fails at
+-- dyld load, not at its own #available guard, on anything older).
+my assertEq(eng's majorVersionOf("14.6.1"), 14, "majorVersionOf parses a three-part version")
+my assertEq(eng's majorVersionOf("26.0"), 26, "majorVersionOf parses a two-part version")
+my assertEq(eng's majorVersionOf("15"), 15, "majorVersionOf parses a bare major version")
+
 return "ALL_OK"
 EOF
 

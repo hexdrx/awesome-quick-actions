@@ -32,7 +32,7 @@ if [ -s "$MANIFEST" ] && [ -n "$(tail -c1 "$MANIFEST")" ]; then
   err "манифест должен заканчиваться переводом строки: $MANIFEST"
 fi
 
-mkdir -p "$ASSET_DIR"
+mkdir -p "$ASSET_DIR" || err "не удалось создать каталог: $ASSET_DIR"
 
 # --- own-process temp file cleanup on graceful exit / Ctrl-C / TERM ---
 # Covers normal `set -e` aborts, INT, and TERM. Never touches a bare glob:

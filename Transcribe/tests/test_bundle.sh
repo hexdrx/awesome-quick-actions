@@ -22,6 +22,21 @@ if [ -e "$WF/Contents/Resources/transcribe-ru" ]; then
   fail "transcribe-ru must NOT be bundled (belongs in Application Support)"
 fi
 
+# The bundled copies of these resources are a second copy of files that
+# live elsewhere in the repo, kept in sync only by remembering to run
+# tools/embed.sh. Existence checks above are not enough: a checksum or
+# release-tag edit to the root assets.manifest (or a rebuilt transcribe-en)
+# that forgets embed.sh would ship a stale bundle with a fully green suite,
+# since the installed action reads the BUNDLE copy while test_integration.sh
+# validates the ROOT copy. Byte-for-byte identity closes that gap, the same
+# way the embedded AppleScript is already checked below.
+cmp -s "$WF/Contents/Resources/assets.manifest" "$HERE/../assets.manifest" \
+  || fail "bundled assets.manifest differs from Transcribe/assets.manifest (run tools/embed.sh)"
+cmp -s "$WF/Contents/Resources/fetch-ru-assets.sh" "$HERE/../src/fetch-ru-assets.sh" \
+  || fail "bundled fetch-ru-assets.sh differs from src/fetch-ru-assets.sh (run tools/embed.sh)"
+cmp -s "$WF/Contents/Resources/transcribe-en" "$HERE/../bin/transcribe-en" \
+  || fail "bundled transcribe-en differs from bin/transcribe-en (run tools/embed.sh)"
+
 # The embedded script must match the readable source.
 python3 - "$WF/Contents/document.wflow" "$HERE/../src/transcribe.applescript" <<'PY'
 import plistlib, sys

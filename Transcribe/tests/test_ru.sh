@@ -41,3 +41,28 @@ grep -qE '^PROGRESS transcribe [0-9]+ [0-9]+ example\.wav$' /tmp/ru_stderr.txt \
   || fail "missing progress line; got: $(cat /tmp/ru_stderr.txt)"
 
 echo "PASS: test_ru"
+
+# --- Multi-file batch, ONE process ---
+# transcribe-ru builds its SherpaOnnxOfflineRecognizer once and reuses it
+# across every file in the batch (unlike transcribe-en's SpeechTranscriber,
+# which cannot be reused across an analyzer run — see test_en.sh). Assert
+# that explicitly rather than by absence of a crash: pass the same fixture
+# twice to one invocation and check both records come back correct.
+out2="$("$BIN" --models "$ASSETS" "$WAV" "$WAV" 2>/tmp/ru_stderr2.txt)"
+
+echo "$out2" | grep -q '^=== FILE 1 ===$' || fail "multi-file batch: missing FILE 1 header"
+echo "$out2" | grep -q '^=== FILE 2 ===$' || fail "multi-file batch: missing FILE 2 header"
+
+body2_1="$(echo "$out2" | sed -n '2p')"
+body2_2="$(echo "$out2" | awk '/^=== FILE 2 ===$/{f=1;next} f{print; exit}')"
+
+shopt -s nocasematch
+for b in "$body2_1" "$body2_2"; do
+  case "$b" in
+    "ничьих не требуя похвал"*) ;;
+    *) fail "multi-file batch: unexpected transcript prefix: $b" ;;
+  esac
+done
+shopt -u nocasematch
+
+echo "PASS: test_ru (two-file batch, single process)"

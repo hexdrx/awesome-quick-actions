@@ -64,3 +64,32 @@ grep -q '^PROGRESS transcribe 1 1 hello_en_44k_stereo.wav$' /tmp/en_stderr2.txt 
   || fail "missing progress line for 44.1kHz/stereo fixture; got: $(cat /tmp/en_stderr2.txt)"
 
 echo "PASS: test_en (44.1kHz stereo resample)"
+
+# --- Multi-file batch, ONE process: the crash this test exists to catch ---
+# A SpeechTranscriber instance cannot be driven by a second SpeechAnalyzer
+# run -- reusing one across files in a single process hits an internal
+# Speech.framework precondition and the process dies with SIGTRAP (exit
+# 133), discarding every transcript in the batch (stdout is block-buffered
+# on a pipe). Every other test above invokes the binary once per file, so
+# it would never have caught this; this is the one that must pass TWO wav
+# paths to a SINGLE invocation.
+set +e
+out3="$("$BIN" "$WAV" "$WAV2" 2>/tmp/en_stderr3.txt)"
+rc3=$?
+set -e
+[ "$rc3" -eq 0 ] || fail "two-file batch exited $rc3 (expected 0); stderr: $(cat /tmp/en_stderr3.txt)"
+
+echo "$out3" | grep -q '^=== FILE 1 ===$' || fail "two-file batch: missing FILE 1 header"
+echo "$out3" | grep -q '^=== FILE 2 ===$' || fail "two-file batch: missing FILE 2 header"
+
+body3_1="$(echo "$out3" | sed -n '2p' | tr '[:upper:]' '[:lower:]')"
+for w in quick brown fox lazy dog; do
+  echo "$body3_1" | grep -q "$w" || fail "two-file batch: missing word '$w' in FILE 1: $body3_1"
+done
+
+body3_2="$(echo "$out3" | awk '/^=== FILE 2 ===$/{f=1;next} f{print; exit}' | tr '[:upper:]' '[:lower:]')"
+for w in she sells seashells; do
+  echo "$body3_2" | grep -q "$w" || fail "two-file batch: missing word '$w' in FILE 2: $body3_2"
+done
+
+echo "PASS: test_en (two-file batch, single process)"

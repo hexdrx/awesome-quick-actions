@@ -39,6 +39,19 @@ on run {input, parameters}
 	if langChoice is false then return input
 	set lang to item 1 of langChoice
 
+	-- transcribe-en is built (deliberately) against the macOS 26 SDK with
+	-- nothing weak-linked, so on an older system it fails at dyld load
+	-- before its own `#available` guard ever runs -- that guard's "нужна
+	-- macOS 26 или новее" message is unreachable dead code. Catch this here
+	-- instead, before any work (decode, model fetch) is wasted. This matters
+	-- because transcribe-ru only needs macOS 14+ and this repo's README
+	-- explicitly invites macOS 14 users in for Russian, so a macOS 14 user
+	-- has every reason to try English too.
+	if lang is "English" and (my majorVersionOf(system version of (system info))) < 26 then
+		display alert "Нужна macOS 26 или новее" message "Распознавание английской речи требует macOS 26 (Tahoe) или новее." & return & "Для русской речи достаточно macOS 14+." as warning
+		return input
+	end if
+
 	set assetDir to (POSIX path of (path to library folder from user domain)) & "Application Support/AwesomeQuickActions/transcribe"
 
 	set totalN to count flist
@@ -52,13 +65,34 @@ on run {input, parameters}
 	-- downloads ~277 MB, so this needs the same generous timeout as the
 	-- engine call below, not the default AppleEvent timeout.
 	if lang is "Русский" then
-		set progress additional description to "Загрузка модели (~277 МБ)…"
+		-- The fetcher re-verifies checksums on every run and exits silently
+		-- when nothing is missing or stale; it only becomes an actual
+		-- download when it emits its own PROGRESS lines. Don't claim a
+		-- download is happening on every single run.
+		set progress additional description to "Проверка модели…"
 		try
 			with timeout of 3600 seconds
-				do shell script quoted form of (resDir & "/fetch-ru-assets.sh") & " 2>&1"
+				-- assetDir (derived once, above, from the user's Library
+				-- folder) is the single source of truth for where assets
+				-- live; pass it through explicitly rather than letting the
+				-- fetcher independently re-derive it from $HOME.
+				do shell script "ASSET_DIR=" & quoted form of assetDir & " " & quoted form of (resDir & "/fetch-ru-assets.sh") & " 2>&1"
 			end timeout
 		on error errMsg
-			display alert "Не удалось подготовить модель" message errMsg as warning
+			-- do shell script hands back the ENTIRE combined output as the
+			-- error message on a non-zero exit, so a network drop partway
+			-- through can bury the one actionable "ERROR: …" line under a
+			-- dozen lines of PROGRESS chatter. Show only the actionable
+			-- line(s) when there are any.
+			set errLines to my engineErrorLines(errMsg)
+			if (count of errLines) > 0 then
+				set AppleScript's text item delimiters to return
+				set errText to errLines as text
+				set AppleScript's text item delimiters to ""
+			else
+				set errText to errMsg
+			end if
+			display alert "Не удалось подготовить модель" message errText as warning
 			return input
 		end try
 	end if
@@ -195,10 +229,22 @@ on run {input, parameters}
 			set AppleScript's text item delimiters to return
 			set failMsg to failLines as text
 			set AppleScript's text item delimiters to ""
-		else if engErr is not "" then
-			set failMsg to engErr
 		else
-			set failMsg to "неизвестная ошибка (код " & (engStatus as text) & ")"
+			-- The engine died without emitting a single ERROR line at all
+			-- (e.g. a crash) -- engineErrorLines found nothing to extract,
+			-- so all that is left is the raw stderr blob, which is mostly
+			-- PROGRESS chatter meant for the progress bar's own
+			-- bookkeeping, never for a human, and may still name a temp
+			-- WAV. Strip PROGRESS lines and rewrite any remaining temp
+			-- basename before this ever reaches an alert.
+			set rawLines to my rewriteErrorLines(my nonProgressLines(engErr), wavs, decoded)
+			if (count of rawLines) > 0 then
+				set AppleScript's text item delimiters to return
+				set failMsg to rawLines as text
+				set AppleScript's text item delimiters to ""
+			else
+				set failMsg to "неизвестная ошибка (код " & (engStatus as text) & ")"
+			end if
 		end if
 		display alert "Не удалось распознать" message failMsg as warning
 	end if
@@ -286,6 +332,32 @@ on engineErrorLines(errBlob)
 	end repeat
 	return outLines
 end engineErrorLines
+
+on nonProgressLines(errBlob)
+	-- Last-resort fallback used only when engineErrorLines found nothing
+	-- (the engine died without emitting a single ERROR line, e.g. a crash).
+	-- Strips PROGRESS lines -- protocol chatter for the progress bar's own
+	-- bookkeeping, never meant for a human -- out of the raw stderr blob.
+	set outLines to {}
+	if errBlob is "" then return outLines
+	repeat with ln in paragraphs of errBlob
+		set lp to contents of ln
+		if lp is not "" and lp does not start with "PROGRESS " then
+			set end of outLines to lp
+		end if
+	end repeat
+	return outLines
+end nonProgressLines
+
+on majorVersionOf(v)
+	-- "14.6.1" -> 14. Used to gate English on macOS 26+: transcribe-en is
+	-- built with nothing weak-linked, so it fails at dyld load on an older
+	-- system before its own #available guard ever runs.
+	set AppleScript's text item delimiters to "."
+	set majorStr to item 1 of (text items of v)
+	set AppleScript's text item delimiters to ""
+	return majorStr as integer
+end majorVersionOf
 
 on hasErrorFor(errLines, base)
 	-- Engine ERROR lines are always "<basename>: <message>" (see main.swift's

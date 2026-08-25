@@ -72,4 +72,35 @@ grep -q 'hasErrorFor(engErrLines, my baseName(tempWav))' "$SRC" \
 grep -q 'rewriteErrorLines(engErrLines, wavs, decoded)' "$SRC" \
   || fail "engine ERROR lines are not rewritten to the original filename before display"
 
+for h in nonProgressLines majorVersionOf; do
+  grep -q "^on $h" "$SRC" || fail "missing handler: $h"
+done
+
+# English must be gated on macOS 26+ in the AppleScript itself: transcribe-en
+# is built with nothing weak-linked, so it fails at dyld load before its own
+# #available guard ever runs -- that guard's message is unreachable dead
+# code, and this check is what actually surfaces it to a pre-26 user.
+grep -q 'lang is "English" and (my majorVersionOf(system version of (system info))) < 26' "$SRC" \
+  || fail "English is not gated on macOS 26+ before dispatch"
+
+# The hard-failure alert must never fall back to the raw, unfiltered engine
+# stderr blob (PROGRESS chatter + temp WAV names) -- it must go through
+# nonProgressLines first.
+if grep -qE '^\s*set failMsg to engErr$' "$SRC"; then
+  fail "hard-failure alert falls back to the raw unfiltered engErr blob"
+fi
+grep -q 'rewriteErrorLines(my nonProgressLines(engErr), wavs, decoded)' "$SRC" \
+  || fail "hard-failure fallback does not filter PROGRESS lines out of engErr"
+
+# The model-fetch failure alert must extract ERROR lines rather than
+# dumping do shell script's raw combined-output error message verbatim.
+grep -q 'set errLines to my engineErrorLines(errMsg)' "$SRC" \
+  || fail "model-fetch failure alert does not filter errMsg through engineErrorLines"
+
+# assetDir (derived once from the user's Library folder) must be the single
+# source of truth for where Russian assets live -- passed explicitly to the
+# fetcher rather than letting it independently re-derive the path from $HOME.
+grep -q 'ASSET_DIR=" & quoted form of assetDir' "$SRC" \
+  || fail "fetch-ru-assets.sh is not invoked with an explicit ASSET_DIR override"
+
 echo "PASS: test_applescript"
