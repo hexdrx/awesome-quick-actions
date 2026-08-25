@@ -107,13 +107,27 @@ for (i, path) in wavs.enumerated() {
     // rather than emitting nothing.
     if bounds.isEmpty && !samples.isEmpty { bounds = [(0, samples.count)] }
 
-    var parts: [String] = []
+    // Two passes so the clamps are mutually aware and padded windows can touch
+    // but never overlap: onset clipping is the defect we actually measured, so
+    // the lead pad is never shortened to make room for a tail pad (which is a
+    // speculative safety margin, not a measured defect). Pass 1 computes each
+    // window's start against the PREVIOUS window's raw bound; pass 2 computes
+    // each window's end against the NEXT window's already-computed (padded)
+    // start, guaranteeing starts[n+1] >= ends[n].
+    var starts: [Int] = []
     for (n, b) in bounds.enumerated() {
       let prevEnd = n > 0 ? bounds[n - 1].end : 0
-      let nextStart = n + 1 < bounds.count ? bounds[n + 1].start : samples.count
-      let a = max(prevEnd, max(0, b.start - leadPad))
-      let z = min(nextStart, min(samples.count, b.end + tailPad))
-      let text = recognizer.decode(samples: [Float](samples[a..<z])).text
+      starts.append(max(prevEnd, max(0, b.start - leadPad)))
+    }
+    var ends: [Int] = []
+    for (n, b) in bounds.enumerated() {
+      let nextStart = n + 1 < bounds.count ? starts[n + 1] : samples.count
+      ends.append(min(nextStart, min(samples.count, b.end + tailPad)))
+    }
+
+    var parts: [String] = []
+    for n in 0..<bounds.count {
+      let text = recognizer.decode(samples: [Float](samples[starts[n]..<ends[n]])).text
         .trimmingCharacters(in: .whitespacesAndNewlines)
       if !text.isEmpty { parts.append(text) }
       note("PROGRESS transcribe \(n + 1) \(bounds.count) \(base)")
@@ -126,6 +140,7 @@ for (i, path) in wavs.enumerated() {
   } catch {
     failed = true
     note("ERROR \(base): \(error.localizedDescription)")
+    note("PROGRESS transcribe 1 1 \(base)")
     print("=== FILE \(i + 1) ===")
     print("")
     print("")
