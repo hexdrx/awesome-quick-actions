@@ -10,6 +10,12 @@
 # splice is unambiguously a seam artifact, not content the source audio legitimately
 # repeats.
 #
+# CAVEAT: this test does NOT discriminate pre-fix from post-fix — it passes on both.
+# On this corpus the overlap region lands in near-silence (the VAD's own minimum
+# reported gap, ~4192 samples, exceeds tailPad=3200), and the RNN-T greedy decoder
+# partitions it cleanly rather than duplicating. It still exercises and guards the
+# seam code path; it does not prove the seam fix.
+#
 # Requires ffmpeg and assets fetched into $ASSETS (same as test_ru.sh).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
