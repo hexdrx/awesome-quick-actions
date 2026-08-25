@@ -34,6 +34,34 @@ fi
 
 mkdir -p "$ASSET_DIR"
 
+# --- own-process temp file cleanup on graceful exit / Ctrl-C / TERM ---
+# Covers normal `set -e` aborts, INT, and TERM. Never touches a bare glob:
+# only ever the single $$-suffixed path this process itself is using right
+# now, so a concurrently running process's own download is untouched.
+CURRENT_TMP=""
+cleanup_tmp() {
+  ec=$?
+  [ -n "$CURRENT_TMP" ] && rm -f -- "$CURRENT_TMP"
+  exit $ec
+}
+trap cleanup_tmp EXIT INT TERM
+
+# --- stale-orphan sweep (handles the case a trap cannot: SIGKILL, a crash,
+# a force-quit) ---
+# A bare `*.part` sweep would also delete a concurrently running process's
+# in-progress download, reintroducing the race the unique name closed. Sweep
+# by liveness instead: a *.part is only removed if no process with the PID
+# embedded in its name exists. PID reuse can rarely make a stale file look
+# live; it just survives one more cycle, which is harmless.
+for f in "$ASSET_DIR"/*.part(N); do
+  pid="${f%.part}"
+  pid="${pid##*.}"
+  case "$pid" in
+    ''|*[!0-9]*) continue ;;  # not a PID-suffixed name we recognize; leave it alone
+  esac
+  kill -0 "$pid" 2>/dev/null || rm -f -- "$f"
+done
+
 typeset -a SHAS NAMES URLS
 while read -r sha name url; do
   case "$sha" in ''|'#'*) continue ;; esac
@@ -70,6 +98,7 @@ for i in $MISSING_I; do
   # was just verified. The rename below is already atomic; a unique name
   # removes the race with no lock needed.
   tmp="$ASSET_DIR/$name.$$.part"
+  CURRENT_TMP="$tmp"
   rm -f "$tmp"
   note "PROGRESS download $done_n $n $name"
   curl -fsSL --retry 3 --retry-delay 2 -o "$tmp" "$url" || { rm -f "$tmp"; err "не удалось скачать $name"; }
@@ -83,6 +112,7 @@ for i in $MISSING_I; do
     chmod +x "$tmp" 2>/dev/null || true
   fi
   mv -f "$tmp" "$ASSET_DIR/$name"
+  CURRENT_TMP=""
   done_n=$((done_n + 1))
   note "PROGRESS download $done_n $n $name"
 done

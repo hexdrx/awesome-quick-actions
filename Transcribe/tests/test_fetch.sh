@@ -28,14 +28,16 @@ $SHA_A  a.bin  file://$SRC/a.bin
 $SHA_B  b.bin  file://$SRC/b.bin
 EOF
 
-# --- (a) a complete, valid install: exit 0, nothing on stderr ---
+# --- (a) a complete, valid install: exit 0, nothing on stdout OR stderr ---
 ADIR_A="$TMP/assets_valid"; mkdir -p "$ADIR_A"
 cp "$SRC/a.bin" "$ADIR_A/a.bin"
 cp "$SRC/b.bin" "$ADIR_A/b.bin"
 
-out="$(MANIFEST="$MANIFEST" ASSET_DIR="$ADIR_A" VERIFY_ONLY=1 "$SCRIPT" 2>&1 1>/dev/null)" \
+stdout_a="$(MANIFEST="$MANIFEST" ASSET_DIR="$ADIR_A" VERIFY_ONLY=1 "$SCRIPT" 2>"$TMP/valid_stderr.txt")" \
   || fail "valid install failed verification"
-[ -z "$out" ] || fail "valid install printed unexpected stderr: $out"
+stderr_a="$(cat "$TMP/valid_stderr.txt")"
+[ -z "$stdout_a" ] || fail "valid install printed unexpected stdout: $stdout_a"
+[ -z "$stderr_a" ] || fail "valid install printed unexpected stderr: $stderr_a"
 
 # --- (b) one corrupt file among otherwise-valid files must be caught ---
 # This is the case that actually isolates checksum comparison: both files
