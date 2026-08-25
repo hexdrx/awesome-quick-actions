@@ -27,7 +27,7 @@ Word-timestamp lines are zero-padded, hundredths-of-a-second, minutes-only (neve
 
 **English** (`SpeechTranscriber`) reports a true start *and* end for every word — `end` is always strictly after `start`.
 
-**Russian** (GigaAM via sherpa-onnx) only reports word *starts*; it is an RNN-T model, not TDT, so there is no real per-token duration to read. A word's end is **inferred** as the onset of the next word (or, for the last word of a decode chunk, that chunk's own end) — this is an **upper bound** on the true end, since it also covers any pause before the next word begins. Treat Russian word end times as approximate, not exact.
+**Russian** (GigaAM via sherpa-onnx) only reports word *starts*; it is an RNN-T model, not TDT, so there is no real per-token duration to read. A word's end is a **true onset, plus an inferred end**: it starts as the onset of the next word (or, for the last word of a decode chunk, that chunk's own end), then is clamped to the end of the silero VAD speech segment that contains the word — real acoustic evidence of where speech actually stopped, rather than a number dominated by whatever silence follows. This clamp measurably tightens the common case (median word length ~0.45s on a real test recording, down from a small fraction of words running several seconds long when unclamped), but it is still an estimate, not an exact boundary: the model itself predicts no token durations, VAD can miss a real pause as continuous "speech" over background noise, and a decode chunk's audio outside every VAD segment falls back to the unclamped next-word onset. Treat Russian word end times as approximate, not exact.
 
 ## What downloads on first Russian use
 

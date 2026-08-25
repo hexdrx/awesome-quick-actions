@@ -222,14 +222,51 @@ func formatWordTimestamp(_ seconds: Float) -> String {
 // text already carries whatever spacing sherpa-onnx put there.
 //
 // Unlike English, GigaAM (RNN-T, not TDT) gives no real per-token duration
-// -- `durations` is NULL for this model -- so a word's END is INFERRED as
-// the onset of the next word's first token (or, for the last word of a
-// chunk, the chunk's own end time). This is an UPPER BOUND on the word's
-// true end: it also covers any pause that follows the word before the next
-// one starts.
+// -- `durations` is NULL for this model. A word's raw END is therefore the
+// onset of the next word's first token (or, for the last word of a chunk,
+// the chunk's own end time) -- but taken alone that is a loose upper bound
+// dominated by whatever silence follows the word (measured on a real
+// recording: a quarter of words came out over 1s, worst case 7.6s, for a
+// median word length of 0.48s). The VAD that already ran over the whole
+// file to choose chunk cut points is real acoustic evidence of where
+// speech actually stopped, so a word's end is additionally clamped to the
+// end of the VAD speech segment containing that word's LAST token:
+//
+//   wordEnd = min(nextTokenOnset, endOfEnclosingVADSpeechSegment)
+//
+// VAD segments are computed once per file in absolute sample coordinates;
+// token timestamps are per chunk. Both are converted to ABSOLUTE seconds
+// (chunk offset already folded into `time` below, segment bounds divided
+// by sampleRate by the caller) before comparison, so there is no per-chunk
+// offset left to get wrong at the comparison site itself. If a word's last
+// token falls outside every VAD segment (possible: decode chunks tile the
+// whole file, including stretches the VAD never marked as speech), there
+// is nothing to clamp against and `nextTokenOnset` is used as-is, exactly
+// as before this change.
+//
+// Sanity floor: a clamped end must never precede the word's own start. If
+// it would, fall back to start + one encoder frame (10ms hop, 4x
+// subsampling = 40ms) -- the model's real timing resolution, and the
+// smallest interval that isn't simply wrong.
 struct TimedWord { let start: Float; let end: Float; let text: String }
 
-func words(from result: SherpaOnnxOfflineRecognitionResult, chunkOffsetSeconds: Float, chunkEndSeconds: Float) -> [TimedWord] {
+let minWordDuration: Float = 0.04  // one encoder frame: 10ms hop, 4x subsampling.
+
+// `segments` must be sorted ascending and in the SAME absolute-second
+// coordinate space as `time` (both derived from sample index / sampleRate).
+// Returns the END of the first segment containing `time`, or nil if `time`
+// falls in no segment at all.
+func enclosingSpeechEnd(_ time: Float, in segments: [(start: Float, end: Float)]) -> Float? {
+  for seg in segments where time >= seg.start && time <= seg.end {
+    return seg.end
+  }
+  return nil
+}
+
+func words(
+  from result: SherpaOnnxOfflineRecognitionResult, chunkOffsetSeconds: Float,
+  chunkEndSeconds: Float, speechSegments: [(start: Float, end: Float)]
+) -> [TimedWord] {
   let n = result.count
   guard n > 0, let tokensArr = result.result.pointee.tokens_arr else { return [] }
   let ts = result.timestamps
@@ -243,14 +280,33 @@ func words(from result: SherpaOnnxOfflineRecognitionResult, chunkOffsetSeconds: 
   var out: [TimedWord] = []
   var buffer = ""
   var wordStart: Float? = nil
+  var wordLastTokenTime: Float = 0
+  // The anchor used for the VAD lookup is the last CONTENT token (one
+  // carrying a letter or digit), not literally the last token of the word.
+  // Measured on a real recording: a trailing punctuation token (".", "!",
+  // "?", ",") can be reported by this RNN-T model many SECONDS after the
+  // word's actual audible content -- e.g. "звонкий" 's letters land at
+  // 94.33-94.85s, but its own "." is timestamped at 101.49s, seven seconds
+  // later, well past the next word's onset. Anchoring on that "." finds no
+  // enclosing VAD segment (or the wrong one) and the clamp silently fails
+  // to help the one word that most needed it. Anchoring on the last real
+  // letter instead reliably lands inside the correct VAD segment.
+  var wordLastContentTokenTime: Float? = nil
 
-  func flush(endTime: Float) {
+  func flush(nextOnset: Float) {
     let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
     if !text.isEmpty, let start = wordStart {
-      out.append(TimedWord(start: start, end: endTime, text: text))
+      var end = nextOnset
+      let anchor = wordLastContentTokenTime ?? wordLastTokenTime
+      if let segEnd = enclosingSpeechEnd(anchor, in: speechSegments) {
+        end = min(end, segEnd)
+      }
+      if end < start { end = start + minWordDuration }
+      out.append(TimedWord(start: start, end: end, text: text))
     }
     buffer = ""
     wordStart = nil
+    wordLastContentTokenTime = nil
   }
 
   for idx in 0..<n {
@@ -260,11 +316,16 @@ func words(from result: SherpaOnnxOfflineRecognitionResult, chunkOffsetSeconds: 
 
     // A token starting with a literal space (including the bare " " token
     // itself) begins a new word -- close out whatever word is in progress
-    // first, its end being this new word's onset.
+    // first, its end being this new word's onset (subject to the VAD
+    // clamp above).
     if tok.hasPrefix(" "), wordStart != nil {
-      flush(endTime: time)
+      flush(nextOnset: time)
     }
     if wordStart == nil { wordStart = time }
+    wordLastTokenTime = time
+    if tok.rangeOfCharacter(from: .alphanumerics) != nil {
+      wordLastContentTokenTime = time
+    }
 
     if tok == " " {
       // Pure separator, no text of its own -- a word boundary only.
@@ -276,7 +337,7 @@ func words(from result: SherpaOnnxOfflineRecognitionResult, chunkOffsetSeconds: 
       buffer += tok
     }
   }
-  flush(endTime: chunkEndSeconds)
+  flush(nextOnset: chunkEndSeconds)
   return out
 }
 
@@ -310,6 +371,20 @@ for (i, path) in wavs.enumerated() {
       speechBounds.append((seg.start, seg.start + seg.n))
       vad.pop()
     }
+    // Debug-only, gated the same as "DEBUG CHUNK" -- one line per VAD speech
+    // segment, in the SAME absolute-sample coordinates as those DEBUG CHUNK
+    // lines, so a test can independently verify a word's clamped end lines
+    // up with a real segment boundary rather than eyeballing it.
+    if debugChunks {
+      for seg in speechBounds { note("DEBUG VAD \(seg.start) \(seg.end)") }
+    }
+    // Same segments, converted once to ABSOLUTE seconds -- the coordinate
+    // space `words(from:...)` below actually compares against (token
+    // timestamps there are chunk-relative seconds plus the chunk's own
+    // absolute-second offset).
+    let speechSecs: [(start: Float, end: Float)] = speechBounds.map {
+      (Float($0.start) / Float(sampleRate), Float($0.end) / Float(sampleRate))
+    }
 
     let chunks = computeChunks(sampleCount: samples.count, speechBounds: speechBounds)
 
@@ -324,7 +399,8 @@ for (i, path) in wavs.enumerated() {
           contentsOf: words(
             from: result,
             chunkOffsetSeconds: Float(chunk.start) / Float(sampleRate),
-            chunkEndSeconds: Float(chunk.end) / Float(sampleRate)))
+            chunkEndSeconds: Float(chunk.end) / Float(sampleRate),
+            speechSegments: speechSecs))
       } else if emitTimestamps {
         timedSentences.append(
           contentsOf: sentences(from: result, chunkOffsetSeconds: Float(chunk.start) / Float(sampleRate)))
