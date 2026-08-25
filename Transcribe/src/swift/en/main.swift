@@ -1,6 +1,6 @@
 // Transcribe/src/swift/en/main.swift
 // English transcription via Apple's on-device SpeechTranscriber (macOS 26+).
-// Usage: transcribe-en <wav>...
+// Usage: transcribe-en [--timestamps] <wav>...
 //
 // Exit codes (shared contract with transcribe-ru):
 //   0 - every input file transcribed successfully
@@ -8,6 +8,7 @@
 //   2 - could not start at all: malformed invocation, or the transcription
 //       engine/asset could not be made available
 import AVFoundation
+import CoreMedia
 import Foundation
 import Speech
 
@@ -20,8 +21,33 @@ func die(_ msg: String) -> Never {
   exit(2)
 }
 
+// ---- --timestamps: group SpeechTranscriber's (roughly per-word) runs into
+// sentences. A run's own text already carries its leading space (joining
+// runs with "" reproduces normal prose), so a sentence's text is simply the
+// concatenation of its runs' text, trimmed. A sentence ends on a run whose
+// (trimmed) text ends with ".", "!" or "?"; its reported time is its first
+// run's audioTimeRange.start, in seconds.
+struct TimedSentence { let time: Float; let text: String }
+
+func isTerminalPunct(_ s: String) -> Bool {
+  guard let last = s.last else { return false }
+  return last == "." || last == "!" || last == "?"
+}
+
+func formatTimestamp(_ seconds: Float) -> String {
+  let total = Int(seconds.rounded(.down))
+  let mm = max(0, total) / 60
+  let ss = max(0, total) % 60
+  return String(format: "%02d:%02d", mm, ss)
+}
+
+struct TranscribeResult {
+  var plainText: String = ""
+  var sentences: [TimedSentence] = []
+}
+
 @available(macOS 26.0, *)
-func transcribe(_ path: String, using transcriber: SpeechTranscriber) async throws -> String {
+func transcribe(_ path: String, using transcriber: SpeechTranscriber, emitTimestamps: Bool) async throws -> TranscribeResult {
   let analyzer = SpeechAnalyzer(modules: [transcriber])
 
   let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
@@ -100,27 +126,76 @@ func transcribe(_ path: String, using transcriber: SpeechTranscriber) async thro
   cont.finish()
   try await analyzer.finalizeAndFinishThroughEndOfInput()
 
-  var parts: [String] = []
-  for try await result in transcriber.results where result.isFinal {
-    let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
-    if !text.isEmpty { parts.append(text) }
+  var out = TranscribeResult()
+  if emitTimestamps {
+    var sents: [TimedSentence] = []
+    var buffer = ""
+    var sentenceStart: Float? = nil
+    var lastKnownTime: Float = 0
+    for try await result in transcriber.results where result.isFinal {
+      for run in result.text.runs {
+        let runText = String(result.text[run.range].characters)
+        if runText.isEmpty { continue }
+        let time: Float
+        if let tr = run.audioTimeRange {
+          time = Float(CMTimeGetSeconds(tr.start))
+          lastKnownTime = time
+        } else {
+          time = lastKnownTime
+        }
+        if sentenceStart == nil { sentenceStart = time }
+        buffer += runText
+
+        let trimmedRun = runText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isTerminalPunct(trimmedRun) {
+          let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+          // A punctuation-only buffer (no letter or digit) is not a real
+          // sentence -- drop it rather than emit a line like "[00:13] .".
+          if !text.isEmpty, text.rangeOfCharacter(from: .alphanumerics) != nil, let start = sentenceStart {
+            sents.append(TimedSentence(time: start, text: text))
+          }
+          buffer = ""
+          sentenceStart = nil
+        }
+      }
+    }
+    let rest = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !rest.isEmpty, rest.rangeOfCharacter(from: .alphanumerics) != nil, let start = sentenceStart {
+      sents.append(TimedSentence(time: start, text: rest))
+    }
+    out.sentences = sents
+  } else {
+    var parts: [String] = []
+    for try await result in transcriber.results where result.isFinal {
+      let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
+      if !text.isEmpty { parts.append(text) }
+    }
+    out.plainText = parts.joined(separator: " ")
   }
-  return parts.joined(separator: " ")
+  return out
 }
 
 @available(macOS 26.0, *)
-func makeTranscriber() -> SpeechTranscriber {
+func makeTranscriber(withTimestamps: Bool) -> SpeechTranscriber {
   SpeechTranscriber(
     locale: Locale(identifier: "en-US"),
     transcriptionOptions: [],
     reportingOptions: [],
-    attributeOptions: [])
+    attributeOptions: withTimestamps ? [.audioTimeRange] : [])
 }
 
 @available(macOS 26.0, *)
 func run() async {
-  let wavs = Array(CommandLine.arguments.dropFirst())
-  if wavs.isEmpty { die("usage: transcribe-en <wav>...") }
+  var wavs: [String] = []
+  var emitTimestamps = false
+  for a in CommandLine.arguments.dropFirst() {
+    if a == "--timestamps" {
+      emitTimestamps = true
+    } else {
+      wavs.append(a)
+    }
+  }
+  if wavs.isEmpty { die("usage: transcribe-en [--timestamps] <wav>...") }
 
   // The en-US asset is absent on a fresh machine; installedLocales is empty.
   // Requested once, up front, against a throwaway transcriber instance --
@@ -128,7 +203,7 @@ func run() async {
   // locale, not on any particular SpeechTranscriber object, so this does
   // not need to (and must not) repeat per file below.
   do {
-    let bootstrap = makeTranscriber()
+    let bootstrap = makeTranscriber(withTimestamps: false)
     if let request = try await AssetInventory.assetInstallationRequest(supporting: [bootstrap]) {
       note("PROGRESS download 0 1 en-US")
       try await request.downloadAndInstall()
@@ -149,10 +224,16 @@ func run() async {
       // second file, discarding every transcript already produced in the
       // batch (stdout is block-buffered on a pipe). Constructing the
       // transcriber is cheap; it does not re-touch the installed asset.
-      let text = try await transcribe(path, using: makeTranscriber())
+      let result = try await transcribe(path, using: makeTranscriber(withTimestamps: emitTimestamps), emitTimestamps: emitTimestamps)
       note("PROGRESS transcribe 1 1 \(base)")
       print("=== FILE \(i + 1) ===")
-      print(text)
+      if emitTimestamps {
+        for s in result.sentences {
+          print("[\(formatTimestamp(s.time))] \(s.text)")
+        }
+      } else {
+        print(result.plainText)
+      }
       print("")
     } catch {
       failed = true

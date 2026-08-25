@@ -1,10 +1,17 @@
 #!/bin/bash
 # Runtime checks for the pure string-parsing handlers (sectionOf, engineErrorLines,
-# hasErrorFor, rewriteErrorLines, trimBlank). Unlike `choose from list` /
-# `display alert`, these have no UI surface, so they ARE testable headlessly:
-# load the compiled script and call the handlers directly, entirely bypassing
-# `on run` (so no dialog is ever triggered, and Automator's {input,
-# parameters} are never needed).
+# hasErrorFor, rewriteErrorLines, trimBlank, enginePathFor, engineArgsFor).
+# Unlike `choose from list` / `display alert` / the NSAlert timestamps dialog
+# (askLangAndTimestamps / showTranscribeAlert), these have no UI surface, so
+# they ARE testable headlessly: load the compiled script and call the
+# handlers directly, entirely bypassing `on run` (so no dialog is ever
+# triggered, and Automator's {input, parameters} are never needed).
+#
+# NOT covered here, and cannot be covered headlessly: the NSAlert dialog
+# itself (askLangAndTimestamps / showTranscribeAlert) -- runModal() blocks
+# on real UI, so its construction, its fallback-to-`choose from list` path,
+# and reading the popup/checkbox state back can only be exercised by a human
+# clicking through the actual Quick Action.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/../src/transcribe.applescript"
@@ -117,6 +124,18 @@ my assertEq((count of (eng's nonProgressLines(""))), 0, "nonProgressLines on an 
 my assertEq(eng's majorVersionOf("14.6.1"), 14, "majorVersionOf parses a three-part version")
 my assertEq(eng's majorVersionOf("26.0"), 26, "majorVersionOf parses a two-part version")
 my assertEq(eng's majorVersionOf("15"), 15, "majorVersionOf parses a bare major version")
+
+-- enginePathFor: Russian dispatches from assetDir (fetched, not bundled),
+-- English dispatches from resDir (the bundle's own Resources).
+my assertEq(eng's enginePathFor("Русский", "/res", "/assets"), "/assets/transcribe-ru", "enginePathFor Russian uses assetDir")
+my assertEq(eng's enginePathFor("English", "/res", "/assets"), "/res/transcribe-en", "enginePathFor English uses resDir")
+
+-- engineArgsFor: --models is Russian-only; --timestamps threads through to
+-- both languages alike, only when the dialog's checkbox is checked.
+my assertEq(eng's engineArgsFor("Русский", "/assets", false), "--models " & quoted form of "/assets", "engineArgsFor Russian without timestamps")
+my assertEq(eng's engineArgsFor("Русский", "/assets", true), "--models " & quoted form of "/assets" & " --timestamps", "engineArgsFor Russian with timestamps")
+my assertEq(eng's engineArgsFor("English", "/assets", false), "", "engineArgsFor English without timestamps has no flags at all")
+my assertEq(eng's engineArgsFor("English", "/assets", true), "--timestamps", "engineArgsFor English with timestamps")
 
 return "ALL_OK"
 EOF

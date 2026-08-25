@@ -55,6 +55,10 @@
 -- English: Apple SpeechTranscriber (macOS 26+). Russian: sherpa-onnx + GigaAM v3.
 -- Requires ffmpeg.
 
+use framework "Foundation"
+use framework "AppKit"
+use scripting additions
+
 property gDone : 0
 
 on run {input, parameters}
@@ -88,9 +92,10 @@ on run {input, parameters}
 		return input
 	end if
 
-	set langChoice to (choose from list {"Русский", "English"} with title ("Transcribe (" &amp; (count flist) &amp; ")") with prompt "Язык записи:" default items {"Русский"})
-	if langChoice is false then return input
-	set lang to item 1 of langChoice
+	set uiChoice to my askLangAndTimestamps(count flist)
+	if uiChoice is missing value then return input
+	set lang to lang of uiChoice
+	set wantTimestamps to timestamps of uiChoice
 
 	-- transcribe-en is built (deliberately) against the macOS 26 SDK with
 	-- nothing weak-linked, so on an older system it fails at dyld load
@@ -189,7 +194,7 @@ on run {input, parameters}
 	-- visible bar already advanced per decoded file above and advances again
 	-- per written file below; this call itself is one opaque step.
 	set progress additional description to "Распознавание…"
-	set engineResult to my runEngine(lang, resDir, assetDir, wavs)
+	set engineResult to my runEngine(lang, resDir, assetDir, wavs, wantTimestamps)
 	set engStatus to status of engineResult
 	set engOut to stdo of engineResult
 	set engErr to errp of engineResult
@@ -305,7 +310,7 @@ on run {input, parameters}
 	return input
 end run
 
-on runEngine(lang, resDir, assetDir, wavs)
+on runEngine(lang, resDir, assetDir, wavs, wantTimestamps)
 	set AppleScript's text item delimiters to " "
 	set quotedWavs to {}
 	repeat with w in wavs
@@ -317,13 +322,11 @@ on runEngine(lang, resDir, assetDir, wavs)
 	-- transcribe-ru is fetched by fetch-ru-assets.sh into assetDir alongside
 	-- the model files — it is NOT a bundled resource. transcribe-en, in
 	-- contrast, lives in the bundle's Resources.
-	if lang is "Русский" then
-		set enginePath to assetDir &amp; "/transcribe-ru"
-		set cmd to quoted form of enginePath &amp; " --models " &amp; quoted form of assetDir &amp; " " &amp; joined
-	else
-		set enginePath to resDir &amp; "/transcribe-en"
-		set cmd to quoted form of enginePath &amp; " " &amp; joined
-	end if
+	set enginePath to my enginePathFor(lang, resDir, assetDir)
+	set argStr to my engineArgsFor(lang, assetDir, wantTimestamps)
+	set cmd to quoted form of enginePath
+	if argStr is not "" then set cmd to cmd &amp; " " &amp; argStr
+	set cmd to cmd &amp; " " &amp; joined
 
 	if not (my pathExists(enginePath)) then
 		return {status:2, stdo:"", errp:"движок не найден: " &amp; enginePath}
@@ -373,6 +376,84 @@ on runEngine(lang, resDir, assetDir, wavs)
 
 	return {status:exitStatus, stdo:rawOut, errp:stde}
 end runEngine
+
+on enginePathFor(lang, resDir, assetDir)
+	-- transcribe-ru is fetched by fetch-ru-assets.sh into assetDir alongside
+	-- the model files — it is NOT a bundled resource. transcribe-en, in
+	-- contrast, lives in the bundle's Resources.
+	if lang is "Русский" then
+		return assetDir &amp; "/transcribe-ru"
+	else
+		return resDir &amp; "/transcribe-en"
+	end if
+end enginePathFor
+
+on engineArgsFor(lang, assetDir, wantTimestamps)
+	-- Pure, side-effect-free flag threading, kept separate from runEngine so
+	-- it is testable headlessly: --models is Russian-only (the engine needs
+	-- to find its model files); --timestamps is threaded through to
+	-- whichever binary gets dispatched, on both languages alike, whenever
+	-- the dialog's checkbox is checked.
+	if lang is "Русский" then
+		set args to "--models " &amp; quoted form of assetDir
+	else
+		set args to ""
+	end if
+	if wantTimestamps then
+		if args is "" then
+			set args to "--timestamps"
+		else
+			set args to args &amp; " --timestamps"
+		end if
+	end if
+	return args
+end engineArgsFor
+
+on askLangAndTimestamps(n)
+	-- Native NSAlert with a language popup and a "Таймкоды" checkbox. NSAlert
+	-- must run on the main thread (true here: AppleScript/Automator's "Run
+	-- AppleScript" action runs single-threaded on the main thread) and can
+	-- in principle fail to construct or run -- guard it and fall back to the
+	-- old `choose from list` (language only, timestamps forced off) rather
+	-- than let the whole action die because it could not ask the question.
+	try
+		set uiResult to my showTranscribeAlert(n)
+		return uiResult
+	on error
+		set langChoice to (choose from list {"Русский", "English"} with title ("Transcribe (" &amp; n &amp; ")") with prompt "Язык записи:" default items {"Русский"})
+		if langChoice is false then return missing value
+		return {lang:(item 1 of langChoice), timestamps:false}
+	end try
+end askLangAndTimestamps
+
+on showTranscribeAlert(n)
+	set alertObj to current application's NSAlert's alloc()'s init()
+	alertObj's setMessageText:("Transcribe (" &amp; n &amp; ")")
+	alertObj's setInformativeText:"Язык записи:"
+	alertObj's addButtonWithTitle:"Распознать"
+	alertObj's addButtonWithTitle:"Отмена"
+
+	set accView to current application's NSView's alloc()'s initWithFrame:(current application's NSMakeRect(0, 0, 260, 78))
+	set popup to current application's NSPopUpButton's alloc()'s initWithFrame:(current application's NSMakeRect(0, 44, 260, 26)) pullsDown:false
+	popup's addItemsWithTitles:{"Русский", "English"}
+	set cb to current application's NSButton's alloc()'s initWithFrame:(current application's NSMakeRect(0, 8, 260, 22))
+	cb's setButtonType:(current application's NSButtonTypeSwitch)
+	cb's setTitle:"Таймкоды"
+	cb's setState:(current application's NSControlStateValueOff)
+	accView's addSubview:popup
+	accView's addSubview:cb
+	alertObj's setAccessoryView:accView
+
+	set btn to (alertObj's runModal()) as integer
+
+	-- NSAlertFirstButtonReturn (1000) is "Распознать"; anything else
+	-- (1001 "Отмена", or a window-closed return) is a clean cancel.
+	if btn is not 1000 then return missing value
+
+	set selLang to (popup's titleOfSelectedItem()) as text
+	set cbState to (cb's state()) as integer
+	return {lang:selLang, timestamps:(cbState is 1)}
+end showTranscribeAlert
 
 on engineErrorLines(errBlob)
 	set outLines to {}

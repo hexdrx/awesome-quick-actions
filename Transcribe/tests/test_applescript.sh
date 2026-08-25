@@ -103,4 +103,30 @@ grep -q 'set errLines to my engineErrorLines(errMsg)' "$SRC" \
 grep -q 'ASSET_DIR=" & quoted form of assetDir' "$SRC" \
   || fail "fetch-ru-assets.sh is not invoked with an explicit ASSET_DIR override"
 
+# The dialog must be a real NSAlert with a checkbox, not the old bare
+# `choose from list` -- but `use framework` requires `use scripting
+# additions` right after it, or every Standard Additions call in the file
+# (display alert, do shell script, path to, ...) fails to compile.
+grep -q 'use framework "AppKit"' "$SRC" || fail "AppKit framework not used for the dialog"
+grep -q 'use scripting additions' "$SRC" || fail "use scripting additions missing (required once use framework is present)"
+grep -q 'current application.s NSAlert' "$SRC" || fail "dialog is not built with NSAlert"
+grep -q 'NSControlStateValueOff' "$SRC" || fail "timestamps checkbox is not initialised off by default"
+
+for h in askLangAndTimestamps showTranscribeAlert enginePathFor engineArgsFor; do
+  grep -q "^on $h" "$SRC" || fail "missing handler: $h"
+done
+
+# The dialog must be guarded: any NSAlert construction/runModal failure must
+# fall back to the old `choose from list`, not let the whole action die.
+grep -q 'choose from list {"Русский", "English"}' "$SRC" \
+  || fail "no choose-from-list fallback for a broken NSAlert dialog"
+
+# --timestamps must be threaded through runEngine to whichever binary is
+# dispatched, without breaking Russian's existing --models handling.
+grep -q 'on runEngine(lang, resDir, assetDir, wavs, wantTimestamps)' "$SRC" \
+  || fail "runEngine does not accept wantTimestamps"
+grep -q 'runEngine(lang, resDir, assetDir, wavs, wantTimestamps)' "$SRC" \
+  || fail "runEngine is not called with wantTimestamps"
+grep -q -- '--models' "$SRC" || fail "Russian --models handling is missing"
+
 echo "PASS: test_applescript"
