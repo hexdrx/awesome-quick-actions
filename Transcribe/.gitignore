@@ -1,0 +1,4 @@
+bin/transcribe-ru
+Transcribe.workflow/Contents/Resources/transcribe-ru
+tests/fixtures/*.wav
+.sdk/

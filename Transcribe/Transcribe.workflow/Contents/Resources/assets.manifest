@@ -1,0 +1,8 @@
+# <sha256>  <filename>  <url>
+# Model: GigaAM v3 e2e RNN-T (punct), MIT. VAD: silero, MIT.
+369f35a71bf288d3b8e0391fabd8dba5f2314088d440bca474056b7b4b6e66bf  encoder.int8.onnx  https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/main/encoder.int8.onnx
+38fc7475443ea2a26f63211ca350f73ac50fff824ab7a3876ee2bd610c53bbc4  decoder.onnx       https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/main/decoder.onnx
+602ff7017a93311aad34df1437c8d7f49911353c13d6eae7a6ee7b041339465c  joiner.onnx        https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/main/joiner.onnx
+39abae20e692998290c574e606f11a9edef2902a1995463fcff63d1490cf22b7  tokens.txt         https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/main/tokens.txt
+9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6  silero_vad.onnx    https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+6c46cd38b5c96a213191074528aafd7eb34a9fb21003bbd2d157816339af7b99  transcribe-ru      https://github.com/hexdrx/awesome-quick-actions/releases/download/transcribe-assets-v1/transcribe-ru
