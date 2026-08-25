@@ -79,6 +79,14 @@ on run {input, parameters}
 			set end of wavs to w
 			set end of decoded to pp
 		on error
+			-- ffmpeg can die mid-encode (abrupt termination, e.g. the timeout
+			-- above firing) and leave a partial multi-megabyte .wav behind. It
+			-- was never added to `wavs`, so neither cleanup loop below would
+			-- ever see it — remove it here, at the only point that still has
+			-- its path.
+			try
+				do shell script "rm -f " & quoted form of w
+			end try
 			set end of errs to my baseName(pp) & " — не удалось декодировать"
 		end try
 		set gDone to gDone + 1
@@ -104,12 +112,20 @@ on run {input, parameters}
 	-- 2 (or anything else unexpected) = could not start at all — nothing was
 	-- produced, so stop rather than write empty/garbage output.
 	if engStatus is 0 or engStatus is 1 then
+		-- Computed up front so the per-file loop below can suppress the
+		-- generic "empty result" message for a file the engine already
+		-- explained on stderr — otherwise the same failure shows up twice
+		-- in the alert (one vague, one precise).
+		set engErrLines to my engineErrorLines(engErr)
+
 		set okc to 0
 		repeat with idx from 1 to (count decoded)
 			set txt to my sectionOf(engOut, idx)
 			set srcPath to item idx of decoded
 			if txt is "" then
-				set end of errs to my baseName(srcPath) & " — пустой результат"
+				if not (my hasErrorFor(engErrLines, my baseName(srcPath))) then
+					set end of errs to my baseName(srcPath) & " — пустой результат"
+				end if
 			else
 				set outp to my uniqueOut(my dirOf(srcPath), my baseOf(srcPath), "txt")
 				set fh to missing value
@@ -131,7 +147,7 @@ on run {input, parameters}
 		end repeat
 
 		-- Surface per-file engine failures that were only reported on stderr.
-		repeat with eLine in my engineErrorLines(engErr)
+		repeat with eLine in engErrLines
 			set end of errs to contents of eLine
 		end repeat
 
@@ -235,22 +251,22 @@ on runEngine(lang, resDir, assetDir, wavs)
 		set exitStatus to exitTxt as integer
 	end try
 
-	set errp to ""
+	set stde to ""
 	try
-		set errp to (do shell script "cat " & quoted form of errFile)
+		set stde to (do shell script "cat " & quoted form of errFile)
 	end try
 
 	try
 		do shell script "rm -f " & quoted form of errFile & " " & quoted form of exitFile
 	end try
 
-	return {status:exitStatus, stdo:rawOut, errp:errp}
+	return {status:exitStatus, stdo:rawOut, errp:stde}
 end runEngine
 
-on engineErrorLines(errp)
+on engineErrorLines(errBlob)
 	set outLines to {}
-	if errp is "" then return outLines
-	repeat with ln in paragraphs of errp
+	if errBlob is "" then return outLines
+	repeat with ln in paragraphs of errBlob
 		set lp to contents of ln
 		if (lp starts with "ERROR " or lp starts with "ERROR:") and (length of lp) > 6 then
 			set end of outLines to my trimBlank(text 7 thru -1 of lp)
@@ -258,6 +274,17 @@ on engineErrorLines(errp)
 	end repeat
 	return outLines
 end engineErrorLines
+
+on hasErrorFor(errLines, base)
+	-- Engine ERROR lines are always "<basename>: <message>" (see main.swift's
+	-- `note("ERROR \(base): ...")`), so a colon-terminated basename prefix
+	-- unambiguously identifies which file an already-stripped line is about.
+	set marker to base & ":"
+	repeat with eLine in errLines
+		if (contents of eLine) starts with marker then return true
+	end repeat
+	return false
+end hasErrorFor
 
 on sectionOf(outText, idx)
 	set marker to "=== FILE " & (idx as text) & " ==="

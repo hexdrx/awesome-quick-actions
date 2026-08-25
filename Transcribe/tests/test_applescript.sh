@@ -15,7 +15,7 @@ if grep -nE '^[[:space:]]*set (file|files|line|lines|text|item|string|count|leng
   fail "reserved word used as a variable name"
 fi
 
-for h in findFFmpeg uniqueOut baseOf dirOf runEngine parseProgress; do
+for h in findFFmpeg uniqueOut baseOf dirOf runEngine parseProgress engineErrorLines hasErrorFor; do
   grep -q "^on $h" "$SRC" || fail "missing handler: $h"
 done
 
@@ -44,5 +44,16 @@ if grep -q 'TRANSCRIBE_EOF' "$SRC"; then
   fail ".txt must be written natively (open for access/write), not a heredoc"
 fi
 grep -q 'open for access' "$SRC" || fail "no native file write (open for access) found"
+
+# A partial WAV must not survive an aborted ffmpeg decode (Fix round 1, finding 1).
+# `quoted form of w` (not `quoted form of (contents of w)`, which the cleanup
+# loops use) is unique to the decode loop's own error handler.
+grep -q 'rm -f " & quoted form of w$' "$SRC" \
+  || fail "decode failure branch does not clean up the partial WAV"
+
+# An engine ERROR for a file must suppress the generic empty-result message for
+# that same file, not add both (Fix round 1, finding 2).
+grep -q 'hasErrorFor(engErrLines' "$SRC" \
+  || fail "empty-result message is not de-duplicated against engine ERROR lines"
 
 echo "PASS: test_applescript"
