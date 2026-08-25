@@ -1,6 +1,12 @@
 // Transcribe/src/swift/ru/main.swift
 // Russian transcription via sherpa-onnx + GigaAM v3 e2e RNN-T.
 // Usage: transcribe-ru --models <dir> <wav>...
+//
+// Exit codes (shared contract with transcribe-en):
+//   0 - every input file transcribed successfully
+//   1 - ran, but at least one file failed (see stderr ERROR lines)
+//   2 - could not start at all: malformed invocation, or the transcription
+//       engine/asset could not be made available
 import AVFoundation
 import Foundation
 

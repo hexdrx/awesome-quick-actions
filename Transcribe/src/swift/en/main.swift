@@ -1,6 +1,12 @@
 // Transcribe/src/swift/en/main.swift
 // English transcription via Apple's on-device SpeechTranscriber (macOS 26+).
 // Usage: transcribe-en <wav>...
+//
+// Exit codes (shared contract with transcribe-ru):
+//   0 - every input file transcribed successfully
+//   1 - ran, but at least one file failed (see stderr ERROR lines)
+//   2 - could not start at all: malformed invocation, or the transcription
+//       engine/asset could not be made available
 import AVFoundation
 import Foundation
 import Speech
@@ -28,40 +34,69 @@ func transcribe(_ path: String, using transcriber: SpeechTranscriber) async thro
 
   // SpeechAnalyzer asserts internally if fed audio that isn't in a format it
   // considers analyzer-compatible. Convert to its best available format for
-  // this module set before handing the buffer over.
-  let buf: AVAudioPCMBuffer
-  if let targetFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]),
-     targetFormat != rawBuf.format {
-    guard let converter = AVAudioConverter(from: rawBuf.format, to: targetFormat) else {
-      throw NSError(domain: "transcribe", code: 2,
-                    userInfo: [NSLocalizedDescriptionKey: "cannot create audio converter"])
-    }
-    let ratio = targetFormat.sampleRate / rawBuf.format.sampleRate
-    let outCapacity = AVAudioFrameCount(Double(rawBuf.frameLength) * ratio) + 1024
-    guard let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outCapacity) else {
-      throw NSError(domain: "transcribe", code: 3,
-                    userInfo: [NSLocalizedDescriptionKey: "cannot allocate converted buffer"])
-    }
-    var error: NSError?
-    var fed = false
-    converter.convert(to: converted, error: &error) { _, outStatus in
-      if fed {
-        outStatus.pointee = .noDataNow
-        return nil
-      }
-      fed = true
-      outStatus.pointee = .haveData
-      return rawBuf
-    }
-    if let error { throw error }
-    buf = converted
-  } else {
-    buf = rawBuf
+  // this module set before handing the buffer over. A nil result means no
+  // compatible format could be determined at all -- that must fail loudly,
+  // not silently fall through to feeding the analyzer the raw (crash-prone)
+  // buffer.
+  guard let targetFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+    throw NSError(domain: "transcribe", code: 4,
+                  userInfo: [NSLocalizedDescriptionKey: "no analyzer-compatible audio format available"])
   }
 
   let (stream, cont) = AsyncStream<AnalyzerInput>.makeStream()
   try await analyzer.start(inputSequence: stream)
-  cont.yield(AnalyzerInput(buffer: buf))
+
+  if targetFormat == rawBuf.format {
+    cont.yield(AnalyzerInput(buffer: rawBuf))
+  } else {
+    guard let converter = AVAudioConverter(from: rawBuf.format, to: targetFormat) else {
+      throw NSError(domain: "transcribe", code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "cannot create audio converter"])
+    }
+
+    // Each call to convert(to:) writes into its destination buffer starting
+    // at frame 0 -- it does not append. Reusing one destination buffer
+    // across multiple convert() calls silently discards everything written
+    // by the previous call the moment the next call produces zero frames
+    // (which the terminal .endOfStream call always does). So every call
+    // gets its own fresh chunk buffer, and any non-empty chunk is streamed
+    // to the analyzer immediately rather than accumulated locally.
+    //
+    // Loop until the converter itself reports .endOfStream (or .error) --
+    // a single .haveData call only guarantees *some* output, not that the
+    // input has been fully drained and flushed. The input block signals
+    // end-of-input with .endOfStream (not .noDataNow, which means "none
+    // available right now, ask again later" and can make the converter
+    // withhold its final flush) once the one buffer of input has been
+    // handed over.
+    var fed = false
+    var status: AVAudioConverterOutputStatus = .haveData
+    while status == .haveData {
+      guard let chunk = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: 16384) else {
+        throw NSError(domain: "transcribe", code: 3,
+                      userInfo: [NSLocalizedDescriptionKey: "cannot allocate converted buffer"])
+      }
+      var convertError: NSError?
+      status = converter.convert(to: chunk, error: &convertError) { _, outStatus in
+        if fed {
+          outStatus.pointee = .endOfStream
+          return nil
+        }
+        fed = true
+        outStatus.pointee = .haveData
+        return rawBuf
+      }
+      if let convertError { throw convertError }
+      if status == .error {
+        throw NSError(domain: "transcribe", code: 5,
+                      userInfo: [NSLocalizedDescriptionKey: "audio conversion failed"])
+      }
+      if chunk.frameLength > 0 {
+        cont.yield(AnalyzerInput(buffer: chunk))
+      }
+    }
+  }
+
   cont.finish()
   try await analyzer.finalizeAndFinishThroughEndOfInput()
 
