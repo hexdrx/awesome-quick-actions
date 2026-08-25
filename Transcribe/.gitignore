@@ -1,2 +1,3 @@
 bin/transcribe-ru
 tests/fixtures/*.wav
+.sdk/
