@@ -7,6 +7,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 "$DIR/ZIP/install.sh"
 "$DIR/FileTools/install.sh"
 "$DIR/QR/install.sh"
+"$DIR/Transcribe/install.sh"
 
 echo
 echo "🎉 All done. Open Finder, right-click a file → Quick Actions."

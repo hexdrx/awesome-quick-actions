@@ -8,6 +8,7 @@ A small collection of polished **macOS Finder Quick Actions** — the items that
 | 🗄️ **[ZIP](ZIP/)** | Right-click file(s)/folder(s) → zipped with `zip -r`. One item → its own `.zip`; many → prompts for one archive name. No macOS junk (`__MACOSX`, `.DS_Store`), never overwrites. | `zip` (built-in) |
 | 🧰 **[File Tools](FileTools/)** | Right-click any file/folder → one menu: **Copy path** (POSIX / `file://` / name), **Checksum** (SHA-256/1, MD5, verify), **New file here**, **Rename batch** (prefix/suffix/numbering/replace). Collision-safe, no dependencies. | built-in (`shasum`, `pbcopy`, `mv`…) |
 | ▪️ **[QR](QR/)** | No menu — click an **image with a QR** and it's decoded automatically (text → clipboard, http/https opens in the browser); click a **text file** (`.txt`/`.md`/…) and its contents become a QR; click anything else and you **type** what to encode. Generated codes land **in the clipboard as an image** and open in Preview to copy/share. No dependencies. | built-in (CoreImage + Vision) |
+| 🎙️ **[Transcribe](Transcribe/)** | Right-click audio/video → pick **Русский** or **English** → a `.txt` transcript appears next to the original. English runs on Apple's on-device recognizer; Russian on GigaAM v3 with punctuation and capitalization. Batch, progress bar, collision-safe names. | Apple Speech (EN) + sherpa-onnx / GigaAM v3 (RU) |
 
 Each action has a **custom icon** in the right-click menu and adapts to light/dark mode.
 
@@ -21,6 +22,7 @@ Each action has a **custom icon** in the right-click menu and adapts to light/da
   brew install ffmpeg
   ```
   The action auto-detects `ffmpeg` in `/opt/homebrew/bin`, `/usr/local/bin` (Intel), `/opt/local/bin` (MacPorts), or your `PATH`.
+- **Transcribe only:** macOS 26+ (for the English engine) and `ffmpeg`. The Russian model (~257 MB) downloads itself on first use.
 
 ## Install
 
@@ -37,6 +39,7 @@ cd awesome-quick-actions
 ./ZIP/install.sh
 ./FileTools/install.sh
 ./QR/install.sh
+./Transcribe/install.sh
 ```
 
 **No terminal?** Double-click `Convert/Convert.workflow` (or any other `*.workflow`) in Finder and confirm **Install**. They land in `~/Library/Services/`.
@@ -48,7 +51,7 @@ cd awesome-quick-actions
 ```sh
 ./uninstall.sh
 ```
-…or just delete the matching bundles in `~/Library/Services/` (`Convert.workflow`, `ZIP.workflow`, `FileTools.workflow`, `QR.workflow`).
+…or just delete the matching bundles in `~/Library/Services/` (`Convert.workflow`, `ZIP.workflow`, `FileTools.workflow`, `QR.workflow`, `Transcribe.workflow`).
 
 ---
 
