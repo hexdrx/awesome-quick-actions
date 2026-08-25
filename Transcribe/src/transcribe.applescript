@@ -115,15 +115,20 @@ on run {input, parameters}
 		-- Computed up front so the per-file loop below can suppress the
 		-- generic "empty result" message for a file the engine already
 		-- explained on stderr — otherwise the same failure shows up twice
-		-- in the alert (one vague, one precise).
+		-- in the alert (one vague, one precise). Kept keyed on the TEMP wav
+		-- basename here, because that is what the engine actually printed —
+		-- it only ever sees the argv path in `wavs`, never the user's
+		-- original filename. rewriteErrorLines (used below, once, for
+		-- display) is what translates that back to the original name.
 		set engErrLines to my engineErrorLines(engErr)
 
 		set okc to 0
 		repeat with idx from 1 to (count decoded)
 			set txt to my sectionOf(engOut, idx)
 			set srcPath to item idx of decoded
+			set tempWav to item idx of wavs
 			if txt is "" then
-				if not (my hasErrorFor(engErrLines, my baseName(srcPath))) then
+				if not (my hasErrorFor(engErrLines, my baseName(tempWav))) then
 					set end of errs to my baseName(srcPath) & " — пустой результат"
 				end if
 			else
@@ -147,7 +152,12 @@ on run {input, parameters}
 		end repeat
 
 		-- Surface per-file engine failures that were only reported on stderr.
-		repeat with eLine in engErrLines
+		-- The engine only ever sees the temp WAV path, so its raw ERROR lines
+		-- are keyed on e.g. "transcribe_a1b2c3d4.wav" — meaningless to the
+		-- user, and on a multi-file batch, impossible to attribute to a
+		-- specific one of their files. Rewrite the leading name back to the
+		-- user's original filename before it ever reaches the alert.
+		repeat with eLine in my rewriteErrorLines(engErrLines, wavs, decoded)
 			set end of errs to contents of eLine
 		end repeat
 
@@ -178,7 +188,9 @@ on run {input, parameters}
 		end repeat
 		set progress completed steps to (totalN * 2)
 
-		set failLines to my engineErrorLines(engErr)
+		-- Same rewrite as the partial-success path: never show a temp WAV
+		-- name to the user, even on a hard failure.
+		set failLines to my rewriteErrorLines(my engineErrorLines(engErr), wavs, decoded)
 		if (count of failLines) > 0 then
 			set AppleScript's text item delimiters to return
 			set failMsg to failLines as text
@@ -279,12 +291,38 @@ on hasErrorFor(errLines, base)
 	-- Engine ERROR lines are always "<basename>: <message>" (see main.swift's
 	-- `note("ERROR \(base): ...")`), so a colon-terminated basename prefix
 	-- unambiguously identifies which file an already-stripped line is about.
+	-- Callers must pass the basename the ENGINE actually saw (the temp WAV),
+	-- not the user's original filename — the engine never sees the latter.
 	set marker to base & ":"
 	repeat with eLine in errLines
 		if (contents of eLine) starts with marker then return true
 	end repeat
 	return false
 end hasErrorFor
+
+on rewriteErrorLines(errLines, wavs, decoded)
+	-- errLines are keyed on the temp WAV's basename (all the engine ever
+	-- saw), which is meaningless to the user and, on a multi-file batch,
+	-- impossible to attribute to a specific one of their files. `wavs` and
+	-- `decoded` are parallel arrays built in lockstep by the decode loop, so
+	-- the temp basename at index i maps to the user's original basename at
+	-- the same index. Rewrite just the leading name; the message body after
+	-- the colon is genuinely informative and is kept verbatim.
+	set outLines to {}
+	repeat with eLine in errLines
+		set ln to contents of eLine
+		repeat with idx from 1 to (count wavs)
+			set tempBase to my baseName(item idx of wavs)
+			set marker to tempBase & ":"
+			if ln starts with marker then
+				set ln to my baseName(item idx of decoded) & (text ((length of tempBase) + 1) thru -1 of ln)
+				exit repeat
+			end if
+		end repeat
+		set end of outLines to ln
+	end repeat
+	return outLines
+end rewriteErrorLines
 
 on sectionOf(outText, idx)
 	set marker to "=== FILE " & (idx as text) & " ==="

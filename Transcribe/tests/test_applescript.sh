@@ -15,7 +15,7 @@ if grep -nE '^[[:space:]]*set (file|files|line|lines|text|item|string|count|leng
   fail "reserved word used as a variable name"
 fi
 
-for h in findFFmpeg uniqueOut baseOf dirOf runEngine parseProgress engineErrorLines hasErrorFor; do
+for h in findFFmpeg uniqueOut baseOf dirOf runEngine parseProgress engineErrorLines hasErrorFor rewriteErrorLines; do
   grep -q "^on $h" "$SRC" || fail "missing handler: $h"
 done
 
@@ -55,5 +55,21 @@ grep -q 'rm -f " & quoted form of w$' "$SRC" \
 # that same file, not add both (Fix round 1, finding 2).
 grep -q 'hasErrorFor(engErrLines' "$SRC" \
   || fail "empty-result message is not de-duplicated against engine ERROR lines"
+
+# Fix round 2: the engine only ever sees the temp WAV path, never the user's
+# original filename, so hasErrorFor must be compared against the temp WAV's
+# basename -- comparing against `srcPath` (the original file) never matches
+# and silently regresses to the pre-fix always-false behaviour.
+if grep -q 'hasErrorFor(engErrLines, my baseName(srcPath))' "$SRC"; then
+  fail "hasErrorFor is compared against the original filename, not the temp WAV the engine actually saw"
+fi
+grep -q 'hasErrorFor(engErrLines, my baseName(tempWav))' "$SRC" \
+  || fail "hasErrorFor is not compared against the temp WAV basename"
+
+# A raw engine ERROR line names the temp WAV (e.g. "transcribe_<tag>.wav"),
+# which is meaningless to the user. It must be rewritten to the user's
+# original filename before ever reaching an alert.
+grep -q 'rewriteErrorLines(engErrLines, wavs, decoded)' "$SRC" \
+  || fail "engine ERROR lines are not rewritten to the original filename before display"
 
 echo "PASS: test_applescript"
