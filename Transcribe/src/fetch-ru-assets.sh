@@ -24,11 +24,21 @@ err() { echo "ERROR: $*" >&2; exit 1; }
 note() { echo "$*" >&2; }
 
 [ -f "$MANIFEST" ] || err "манифест не найден: $MANIFEST"
+
+# `read` returns nonzero at EOF on a final line lacking a trailing newline,
+# so the while-loop below would silently drop that last row. Fail loudly
+# instead of quietly losing an asset row (Task 8 hand-edits this file).
+if [ -s "$MANIFEST" ] && [ -n "$(tail -c1 "$MANIFEST")" ]; then
+  err "манифест должен заканчиваться переводом строки: $MANIFEST"
+fi
+
 mkdir -p "$ASSET_DIR"
 
 typeset -a SHAS NAMES URLS
 while read -r sha name url; do
   case "$sha" in ''|'#'*) continue ;; esac
+  # Defensively strip a trailing CR in case the manifest was saved as CRLF.
+  sha="${sha%$'\r'}"; name="${name%$'\r'}"; url="${url%$'\r'}"
   SHAS+=("$sha"); NAMES+=("$name"); URLS+=("$url")
 done < "$MANIFEST"
 
@@ -54,7 +64,12 @@ done_n=0
 n=${#MISSING_I[@]}
 for i in $MISSING_I; do
   name="${NAMES[$i]}"; url="${URLS[$i]}"; want="${SHAS[$i]}"
-  tmp="$ASSET_DIR/$name.part"
+  # Unique per process: a fixed name would let two overlapping runs (e.g.
+  # the action triggered twice) race on the same .part path, letting one
+  # process's mv install another's half-written bytes under a name that
+  # was just verified. The rename below is already atomic; a unique name
+  # removes the race with no lock needed.
+  tmp="$ASSET_DIR/$name.$$.part"
   rm -f "$tmp"
   note "PROGRESS download $done_n $n $name"
   curl -fsSL --retry 3 --retry-delay 2 -o "$tmp" "$url" || { rm -f "$tmp"; err "не удалось скачать $name"; }
@@ -63,7 +78,10 @@ for i in $MISSING_I; do
     rm -f "$tmp"
     err "контрольная сумма не совпала: $name"
   fi
-  chmod +x "$tmp" 2>/dev/null || true
+  # Only transcribe-ru is an executable; the model/VAD files don't need +x.
+  if [ "$name" = "transcribe-ru" ]; then
+    chmod +x "$tmp" 2>/dev/null || true
+  fi
   mv -f "$tmp" "$ASSET_DIR/$name"
   done_n=$((done_n + 1))
   note "PROGRESS download $done_n $n $name"
