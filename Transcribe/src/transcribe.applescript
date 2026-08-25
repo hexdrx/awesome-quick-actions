@@ -45,6 +45,7 @@ on run {input, parameters}
 	if uiChoice is missing value then return input
 	set lang to lang of uiChoice
 	set wantTimestamps to timestamps of uiChoice
+	set wantWordTimestamps to wordTimestamps of uiChoice
 
 	-- transcribe-en is built (deliberately) against the macOS 26 SDK with
 	-- nothing weak-linked, so on an older system it fails at dyld load
@@ -143,7 +144,7 @@ on run {input, parameters}
 	-- visible bar already advanced per decoded file above and advances again
 	-- per written file below; this call itself is one opaque step.
 	set progress additional description to "Распознавание…"
-	set engineResult to my runEngine(lang, resDir, assetDir, wavs, wantTimestamps)
+	set engineResult to my runEngine(lang, resDir, assetDir, wavs, wantTimestamps, wantWordTimestamps)
 	set engStatus to status of engineResult
 	set engOut to stdo of engineResult
 	set engErr to errp of engineResult
@@ -251,7 +252,7 @@ on run {input, parameters}
 	return input
 end run
 
-on runEngine(lang, resDir, assetDir, wavs, wantTimestamps)
+on runEngine(lang, resDir, assetDir, wavs, wantTimestamps, wantWordTimestamps)
 	set AppleScript's text item delimiters to " "
 	set quotedWavs to {}
 	repeat with w in wavs
@@ -264,7 +265,7 @@ on runEngine(lang, resDir, assetDir, wavs, wantTimestamps)
 	-- the model files — it is NOT a bundled resource. transcribe-en, in
 	-- contrast, lives in the bundle's Resources.
 	set enginePath to my enginePathFor(lang, resDir, assetDir)
-	set argStr to my engineArgsFor(lang, assetDir, wantTimestamps)
+	set argStr to my engineArgsFor(lang, assetDir, wantTimestamps, wantWordTimestamps)
 	set cmd to quoted form of enginePath
 	if argStr is not "" then set cmd to cmd & " " & argStr
 	set cmd to cmd & " " & joined
@@ -329,18 +330,29 @@ on enginePathFor(lang, resDir, assetDir)
 	end if
 end enginePathFor
 
-on engineArgsFor(lang, assetDir, wantTimestamps)
+on engineArgsFor(lang, assetDir, wantTimestamps, wantWordTimestamps)
 	-- Pure, side-effect-free flag threading, kept separate from runEngine so
 	-- it is testable headlessly: --models is Russian-only (the engine needs
-	-- to find its model files); --timestamps is threaded through to
-	-- whichever binary gets dispatched, on both languages alike, whenever
-	-- the dialog's checkbox is checked.
+	-- to find its model files); --timestamps / --word-timestamps are
+	-- threaded through to whichever binary gets dispatched, on both
+	-- languages alike, whenever the dialog's checkboxes are checked.
+	--
+	-- "по словам" (wantWordTimestamps) implies word timestamps regardless of
+	-- "Таймкоды" (wantTimestamps) -- there is no combination of the two
+	-- checkboxes that means nothing, so only one of --word-timestamps /
+	-- --timestamps is ever passed, never both.
 	if lang is "Русский" then
 		set args to "--models " & quoted form of assetDir
 	else
 		set args to ""
 	end if
-	if wantTimestamps then
+	if wantWordTimestamps then
+		if args is "" then
+			set args to "--word-timestamps"
+		else
+			set args to args & " --word-timestamps"
+		end if
+	else if wantTimestamps then
 		if args is "" then
 			set args to "--timestamps"
 		else
@@ -372,9 +384,11 @@ on askLangAndTimestamps(n)
 	if my gUIResult is not "FAILED" then return my gUIResult
 
 	-- Last resort: ask a plainer question rather than let the action die.
+	-- Neither timestamp mode is offered here -- there is no checkbox in a
+	-- plain `choose from list`.
 	set langChoice to (choose from list {"Русский", "English"} with title ("Transcribe (" & n & ")") with prompt "Язык записи:" default items {"Русский"})
 	if langChoice is false then return missing value
-	return {lang:(item 1 of langChoice), timestamps:false}
+	return {lang:(item 1 of langChoice), timestamps:false, wordTimestamps:false}
 end askLangAndTimestamps
 
 on showAlertOnMain:sender
@@ -397,15 +411,26 @@ on showTranscribeAlert(n)
 	alertObj's addButtonWithTitle:"Распознать"
 	alertObj's addButtonWithTitle:"Отмена"
 
-	set accView to current application's NSView's alloc()'s initWithFrame:(current application's NSMakeRect(0, 0, 260, 78))
-	set popup to current application's NSPopUpButton's alloc()'s initWithFrame:(current application's NSMakeRect(0, 44, 260, 26)) pullsDown:false
+	-- Accessory view: language popup, then "Таймкоды" (sentence timestamps),
+	-- then "по словам" (word timestamps) indented below it so it reads as
+	-- subordinate. No enable/disable wiring between the two checkboxes --
+	-- see engineArgsFor: "по словам" ticked always wins and implies word
+	-- timestamps whether or not "Таймкоды" is also ticked, so every
+	-- combination of the two means something and there is nothing to gate.
+	set accView to current application's NSView's alloc()'s initWithFrame:(current application's NSMakeRect(0, 0, 260, 106))
+	set popup to current application's NSPopUpButton's alloc()'s initWithFrame:(current application's NSMakeRect(0, 72, 260, 26)) pullsDown:false
 	popup's addItemsWithTitles:{"Русский", "English"}
-	set cb to current application's NSButton's alloc()'s initWithFrame:(current application's NSMakeRect(0, 8, 260, 22))
+	set cb to current application's NSButton's alloc()'s initWithFrame:(current application's NSMakeRect(0, 40, 260, 22))
 	cb's setButtonType:(current application's NSButtonTypeSwitch)
 	cb's setTitle:"Таймкоды"
 	cb's setState:(current application's NSControlStateValueOff)
+	set cbWords to current application's NSButton's alloc()'s initWithFrame:(current application's NSMakeRect(16, 10, 244, 22))
+	cbWords's setButtonType:(current application's NSButtonTypeSwitch)
+	cbWords's setTitle:"по словам"
+	cbWords's setState:(current application's NSControlStateValueOff)
 	accView's addSubview:popup
 	accView's addSubview:cb
+	accView's addSubview:cbWords
 	alertObj's setAccessoryView:accView
 
 	set btn to (alertObj's runModal()) as integer
@@ -416,7 +441,8 @@ on showTranscribeAlert(n)
 
 	set selLang to (popup's titleOfSelectedItem()) as text
 	set cbState to (cb's state()) as integer
-	return {lang:selLang, timestamps:(cbState is 1)}
+	set cbWordsState to (cbWords's state()) as integer
+	return {lang:selLang, timestamps:(cbState is 1), wordTimestamps:(cbWordsState is 1)}
 end showTranscribeAlert
 
 -- Write UTF-8 via NSString rather than `open for access`.

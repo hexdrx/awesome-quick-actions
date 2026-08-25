@@ -1,6 +1,6 @@
 // Transcribe/src/swift/en/main.swift
 // English transcription via Apple's on-device SpeechTranscriber (macOS 26+).
-// Usage: transcribe-en [--timestamps] <wav>...
+// Usage: transcribe-en [--timestamps] [--word-timestamps] <wav>...
 //
 // Exit codes (shared contract with transcribe-ru):
 //   0 - every input file transcribed successfully
@@ -29,6 +29,14 @@ func die(_ msg: String) -> Never {
 // run's audioTimeRange.start, in seconds.
 struct TimedSentence { let time: Float; let text: String }
 
+// ---- --word-timestamps: one line per word, with a TRUE start and end.
+// SpeechTranscriber's runs are per word, and each carries a real
+// audioTimeRange (both .start and .duration) -- unlike the Russian engine,
+// no end time needs to be inferred here. A run's own text already includes
+// any leading space and trailing punctuation (e.g. " there."), so the word
+// text is simply the run's text, trimmed.
+struct TimedWord { let start: Float; let end: Float; let text: String }
+
 func isTerminalPunct(_ s: String) -> Bool {
   guard let last = s.last else { return false }
   return last == "." || last == "!" || last == "?"
@@ -41,13 +49,25 @@ func formatTimestamp(_ seconds: Float) -> String {
   return String(format: "%02d:%02d", mm, ss)
 }
 
+// "[MM:SS.cc-MM:SS.cc]" -- hundredths of a second, minutes never roll over
+// into hours (a 75-minute file reads "75:03.10", not "1:15:03.10").
+func formatWordTimestamp(_ seconds: Float) -> String {
+  let totalCentis = Int((seconds * 100).rounded())
+  let mm = max(0, totalCentis) / 6000
+  let rem = max(0, totalCentis) % 6000
+  let ss = rem / 100
+  let cc = rem % 100
+  return String(format: "%02d:%02d.%02d", mm, ss, cc)
+}
+
 struct TranscribeResult {
   var plainText: String = ""
   var sentences: [TimedSentence] = []
+  var words: [TimedWord] = []
 }
 
 @available(macOS 26.0, *)
-func transcribe(_ path: String, using transcriber: SpeechTranscriber, emitTimestamps: Bool) async throws -> TranscribeResult {
+func transcribe(_ path: String, using transcriber: SpeechTranscriber, emitTimestamps: Bool, emitWordTimestamps: Bool) async throws -> TranscribeResult {
   let analyzer = SpeechAnalyzer(modules: [transcriber])
 
   let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
@@ -127,7 +147,32 @@ func transcribe(_ path: String, using transcriber: SpeechTranscriber, emitTimest
   try await analyzer.finalizeAndFinishThroughEndOfInput()
 
   var out = TranscribeResult()
-  if emitTimestamps {
+  if emitWordTimestamps {
+    var words: [TimedWord] = []
+    var lastKnownStart: Float = 0
+    var lastKnownEnd: Float = 0
+    for try await result in transcriber.results where result.isFinal {
+      for run in result.text.runs {
+        let runText = String(result.text[run.range].characters)
+        if runText.isEmpty { continue }
+        let trimmed = runText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { continue }
+        let start: Float
+        let end: Float
+        if let tr = run.audioTimeRange {
+          start = Float(CMTimeGetSeconds(tr.start))
+          end = start + Float(CMTimeGetSeconds(tr.duration))
+          lastKnownStart = start
+          lastKnownEnd = end
+        } else {
+          start = lastKnownStart
+          end = lastKnownEnd
+        }
+        words.append(TimedWord(start: start, end: end, text: trimmed))
+      }
+    }
+    out.words = words
+  } else if emitTimestamps {
     var sents: [TimedSentence] = []
     var buffer = ""
     var sentenceStart: Float? = nil
@@ -188,14 +233,17 @@ func makeTranscriber(withTimestamps: Bool) -> SpeechTranscriber {
 func run() async {
   var wavs: [String] = []
   var emitTimestamps = false
+  var emitWordTimestamps = false
   for a in CommandLine.arguments.dropFirst() {
     if a == "--timestamps" {
       emitTimestamps = true
+    } else if a == "--word-timestamps" {
+      emitWordTimestamps = true
     } else {
       wavs.append(a)
     }
   }
-  if wavs.isEmpty { die("usage: transcribe-en [--timestamps] <wav>...") }
+  if wavs.isEmpty { die("usage: transcribe-en [--timestamps] [--word-timestamps] <wav>...") }
 
   // The en-US asset is absent on a fresh machine; installedLocales is empty.
   // Requested once, up front, against a throwaway transcriber instance --
@@ -224,10 +272,15 @@ func run() async {
       // second file, discarding every transcript already produced in the
       // batch (stdout is block-buffered on a pipe). Constructing the
       // transcriber is cheap; it does not re-touch the installed asset.
-      let result = try await transcribe(path, using: makeTranscriber(withTimestamps: emitTimestamps), emitTimestamps: emitTimestamps)
+      let needsTiming = emitTimestamps || emitWordTimestamps
+      let result = try await transcribe(path, using: makeTranscriber(withTimestamps: needsTiming), emitTimestamps: emitTimestamps, emitWordTimestamps: emitWordTimestamps)
       note("PROGRESS transcribe 1 1 \(base)")
       print("=== FILE \(i + 1) ===")
-      if emitTimestamps {
+      if emitWordTimestamps {
+        for w in result.words {
+          print("[\(formatWordTimestamp(w.start))–\(formatWordTimestamp(w.end))] \(w.text)")
+        }
+      } else if emitTimestamps {
         for s in result.sentences {
           print("[\(formatTimestamp(s.time))] \(s.text)")
         }

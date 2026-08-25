@@ -11,6 +11,24 @@ A Finder Quick Action that transcribes **audio and video** to text. Right-click 
 
 Both languages go through the same batch/progress/collision-safe pipeline; only the recognizer differs.
 
+## Timestamps
+
+The dialog offers two independent checkboxes, "Таймкоды" and "по словам" (indented below it):
+
+| Таймкоды | по словам | Output |
+|----------|-----------|--------|
+| off | off | plain paragraph (the default) |
+| on | off | one line per **sentence**: `[MM:SS] Sentence text.` |
+| any | on | one line per **word**: `[MM:SS.cc–MM:SS.cc] Слово` |
+
+Ticking "по словам" always produces word-level timestamps, whether or not "Таймкоды" is also ticked — the two checkboxes never combine into an output that means nothing.
+
+Word-timestamp lines are zero-padded, hundredths-of-a-second, minutes-only (never rolling over into hours — a 75-minute file reads `[75:03.10–75:03.44]`), with an en dash (`–`) between the two times. Punctuation stays attached to its word exactly as the model emits it.
+
+**English** (`SpeechTranscriber`) reports a true start *and* end for every word — `end` is always strictly after `start`.
+
+**Russian** (GigaAM via sherpa-onnx) only reports word *starts*; it is an RNN-T model, not TDT, so there is no real per-token duration to read. A word's end is **inferred** as the onset of the next word (or, for the last word of a decode chunk, that chunk's own end) — this is an **upper bound** on the true end, since it also covers any pause before the next word begins. Treat Russian word end times as approximate, not exact.
+
 ## What downloads on first Russian use
 
 The Russian model isn't bundled — it's fetched once, on first use, and cached:

@@ -130,12 +130,20 @@ my assertEq(eng's majorVersionOf("15"), 15, "majorVersionOf parses a bare major 
 my assertEq(eng's enginePathFor("Русский", "/res", "/assets"), "/assets/transcribe-ru", "enginePathFor Russian uses assetDir")
 my assertEq(eng's enginePathFor("English", "/res", "/assets"), "/res/transcribe-en", "enginePathFor English uses resDir")
 
--- engineArgsFor: --models is Russian-only; --timestamps threads through to
--- both languages alike, only when the dialog's checkbox is checked.
-my assertEq(eng's engineArgsFor("Русский", "/assets", false), "--models " & quoted form of "/assets", "engineArgsFor Russian without timestamps")
-my assertEq(eng's engineArgsFor("Русский", "/assets", true), "--models " & quoted form of "/assets" & " --timestamps", "engineArgsFor Russian with timestamps")
-my assertEq(eng's engineArgsFor("English", "/assets", false), "", "engineArgsFor English without timestamps has no flags at all")
-my assertEq(eng's engineArgsFor("English", "/assets", true), "--timestamps", "engineArgsFor English with timestamps")
+-- engineArgsFor: --models is Russian-only; --timestamps / --word-timestamps
+-- thread through to both languages alike, only when the dialog's matching
+-- checkbox is checked. "по словам" (wantWordTimestamps) always wins over
+-- "Таймкоды" (wantTimestamps) -- there is no combination of the two
+-- checkboxes that produces neither flag when either is checked, and the two
+-- flags are never passed together.
+my assertEq(eng's engineArgsFor("Русский", "/assets", false, false), "--models " & quoted form of "/assets", "engineArgsFor Russian, neither checkbox")
+my assertEq(eng's engineArgsFor("Русский", "/assets", true, false), "--models " & quoted form of "/assets" & " --timestamps", "engineArgsFor Russian, Таймкоды only")
+my assertEq(eng's engineArgsFor("Русский", "/assets", false, true), "--models " & quoted form of "/assets" & " --word-timestamps", "engineArgsFor Russian, по словам only")
+my assertEq(eng's engineArgsFor("Русский", "/assets", true, true), "--models " & quoted form of "/assets" & " --word-timestamps", "engineArgsFor Russian, both checked -- по словам wins")
+my assertEq(eng's engineArgsFor("English", "/assets", false, false), "", "engineArgsFor English, neither checkbox has no flags at all")
+my assertEq(eng's engineArgsFor("English", "/assets", true, false), "--timestamps", "engineArgsFor English, Таймкоды only")
+my assertEq(eng's engineArgsFor("English", "/assets", false, true), "--word-timestamps", "engineArgsFor English, по словам only")
+my assertEq(eng's engineArgsFor("English", "/assets", true, true), "--word-timestamps", "engineArgsFor English, both checked -- по словам wins")
 
 return "ALL_OK"
 EOF

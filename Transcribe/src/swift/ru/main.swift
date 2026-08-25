@@ -1,6 +1,6 @@
 // Transcribe/src/swift/ru/main.swift
 // Russian transcription via sherpa-onnx + GigaAM v3 e2e RNN-T.
-// Usage: transcribe-ru --models <dir> [--timestamps] <wav>...
+// Usage: transcribe-ru --models <dir> [--timestamps] [--word-timestamps] <wav>...
 //
 // Exit codes (shared contract with transcribe-en):
 //   0 - every input file transcribed successfully
@@ -35,6 +35,7 @@ let debugChunks = ProcessInfo.processInfo.environment["TRANSCRIBE_RU_DEBUG_CHUNK
 var modelsDir = ""
 var wavs: [String] = []
 var emitTimestamps = false
+var emitWordTimestamps = false
 var args = Array(CommandLine.arguments.dropFirst())
 while let a = args.first {
   args.removeFirst()
@@ -44,12 +45,14 @@ while let a = args.first {
     args.removeFirst()
   } else if a == "--timestamps" {
     emitTimestamps = true
+  } else if a == "--word-timestamps" {
+    emitWordTimestamps = true
   } else {
     wavs.append(a)
   }
 }
 if modelsDir.isEmpty || wavs.isEmpty {
-  die("usage: transcribe-ru --models <dir> [--timestamps] <wav>...")
+  die("usage: transcribe-ru --models <dir> [--timestamps] [--word-timestamps] <wav>...")
 }
 
 // ---- recognizer, built once for the whole batch ----
@@ -193,6 +196,90 @@ func formatTimestamp(_ seconds: Float) -> String {
   return String(format: "%02d:%02d", mm, ss)
 }
 
+// "[MM:SS.cc-MM:SS.cc]" -- hundredths of a second, minutes never roll over
+// into hours (a 75-minute file reads "75:03.10", not "1:15:03.10").
+func formatWordTimestamp(_ seconds: Float) -> String {
+  let totalCentis = Int((seconds * 100).rounded())
+  let mm = max(0, totalCentis) / 6000
+  let rem = max(0, totalCentis) % 6000
+  let ss = rem / 100
+  let cc = rem % 100
+  return String(format: "%02d:%02d.%02d", mm, ss, cc)
+}
+
+// ---- --word-timestamps: group a chunk's tokens into words.
+//
+// GigaAM's vocabulary file (tokens.txt) marks a word-initial subword with
+// the SentencePiece "▁" glyph (U+2581) -- but sherpa-onnx's C API does NOT
+// hand that glyph back on `tokens_arr`: it already renders it as a literal
+// ASCII space (confirmed by dumping raw bytes off this exact model/binary).
+// So the rule actually exercised at runtime is: a token beginning with a
+// literal " " starts a new word (with the space itself dropped from the
+// word's text); a token with no leading space -- including punctuation like
+// "." "," "!" "?" -- is a continuation and attaches directly to what
+// precedes it, no space inserted. `sentences(from:)` above never needed to
+// special-case this: it only ever concatenates raw token text, and that
+// text already carries whatever spacing sherpa-onnx put there.
+//
+// Unlike English, GigaAM (RNN-T, not TDT) gives no real per-token duration
+// -- `durations` is NULL for this model -- so a word's END is INFERRED as
+// the onset of the next word's first token (or, for the last word of a
+// chunk, the chunk's own end time). This is an UPPER BOUND on the word's
+// true end: it also covers any pause that follows the word before the next
+// one starts.
+struct TimedWord { let start: Float; let end: Float; let text: String }
+
+func words(from result: SherpaOnnxOfflineRecognitionResult, chunkOffsetSeconds: Float, chunkEndSeconds: Float) -> [TimedWord] {
+  let n = result.count
+  guard n > 0, let tokensArr = result.result.pointee.tokens_arr else { return [] }
+  let ts = result.timestamps
+
+  var toks: [String] = []
+  toks.reserveCapacity(n)
+  for idx in 0..<n {
+    toks.append(tokensArr[idx].map { String(cString: $0) } ?? "")
+  }
+
+  var out: [TimedWord] = []
+  var buffer = ""
+  var wordStart: Float? = nil
+
+  func flush(endTime: Float) {
+    let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !text.isEmpty, let start = wordStart {
+      out.append(TimedWord(start: start, end: endTime, text: text))
+    }
+    buffer = ""
+    wordStart = nil
+  }
+
+  for idx in 0..<n {
+    let tok = toks[idx]
+    if tok.isEmpty { continue }
+    let time = (idx < ts.count ? ts[idx] : 0) + chunkOffsetSeconds
+
+    // A token starting with a literal space (including the bare " " token
+    // itself) begins a new word -- close out whatever word is in progress
+    // first, its end being this new word's onset.
+    if tok.hasPrefix(" "), wordStart != nil {
+      flush(endTime: time)
+    }
+    if wordStart == nil { wordStart = time }
+
+    if tok == " " {
+      // Pure separator, no text of its own -- a word boundary only.
+    } else if tok.hasPrefix(" ") {
+      buffer += tok.dropFirst()
+    } else {
+      // Continuation subtoken or punctuation -- attaches directly to what
+      // precedes it, no space.
+      buffer += tok
+    }
+  }
+  flush(endTime: chunkEndSeconds)
+  return out
+}
+
 var failed = false
 
 for (i, path) in wavs.enumerated() {
@@ -228,10 +315,17 @@ for (i, path) in wavs.enumerated() {
 
     var parts: [String] = []
     var timedSentences: [TimedSentence] = []
+    var timedWords: [TimedWord] = []
 
     for (n, chunk) in chunks.enumerated() {
       let result = recognizer.decode(samples: [Float](samples[chunk.start..<chunk.end]))
-      if emitTimestamps {
+      if emitWordTimestamps {
+        timedWords.append(
+          contentsOf: words(
+            from: result,
+            chunkOffsetSeconds: Float(chunk.start) / Float(sampleRate),
+            chunkEndSeconds: Float(chunk.end) / Float(sampleRate)))
+      } else if emitTimestamps {
         timedSentences.append(
           contentsOf: sentences(from: result, chunkOffsetSeconds: Float(chunk.start) / Float(sampleRate)))
       } else {
@@ -244,7 +338,11 @@ for (i, path) in wavs.enumerated() {
     if chunks.isEmpty { note("PROGRESS transcribe 1 1 \(base)") }
 
     print("=== FILE \(i + 1) ===")
-    if emitTimestamps {
+    if emitWordTimestamps {
+      for w in timedWords {
+        print("[\(formatWordTimestamp(w.start))–\(formatWordTimestamp(w.end))] \(w.text)")
+      }
+    } else if emitTimestamps {
       for s in timedSentences {
         print("[\(formatTimestamp(s.time))] \(s.text)")
       }

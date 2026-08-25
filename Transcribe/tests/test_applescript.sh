@@ -121,12 +121,21 @@ done
 grep -q 'choose from list {"Русский", "English"}' "$SRC" \
   || fail "no choose-from-list fallback for a broken NSAlert dialog"
 
-# --timestamps must be threaded through runEngine to whichever binary is
-# dispatched, without breaking Russian's existing --models handling.
-grep -q 'on runEngine(lang, resDir, assetDir, wavs, wantTimestamps)' "$SRC" \
-  || fail "runEngine does not accept wantTimestamps"
-grep -q 'runEngine(lang, resDir, assetDir, wavs, wantTimestamps)' "$SRC" \
-  || fail "runEngine is not called with wantTimestamps"
+# --timestamps / --word-timestamps must be threaded through runEngine to
+# whichever binary is dispatched, without breaking Russian's existing
+# --models handling.
+grep -q 'on runEngine(lang, resDir, assetDir, wavs, wantTimestamps, wantWordTimestamps)' "$SRC" \
+  || fail "runEngine does not accept wantTimestamps and wantWordTimestamps"
+grep -q 'runEngine(lang, resDir, assetDir, wavs, wantTimestamps, wantWordTimestamps)' "$SRC" \
+  || fail "runEngine is not called with wantTimestamps and wantWordTimestamps"
 grep -q -- '--models' "$SRC" || fail "Russian --models handling is missing"
+
+# --word-timestamps: the second ("по словам") checkbox must exist, flow
+# through engineArgsFor/runEngine, and win over --timestamps when both are
+# checked (see engineArgsFor's own precedence logic).
+grep -q 'по словам' "$SRC" || fail "second ('по словам') checkbox is missing"
+grep -q -- '--word-timestamps' "$SRC" || fail "--word-timestamps flag is never threaded through"
+grep -q 'on engineArgsFor(lang, assetDir, wantTimestamps, wantWordTimestamps)' "$SRC" \
+  || fail "engineArgsFor does not accept wantWordTimestamps"
 
 echo "PASS: test_applescript"
