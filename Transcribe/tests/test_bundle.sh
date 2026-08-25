@@ -14,6 +14,14 @@ done
 [ -x "$WF/Contents/Resources/transcribe-en" ] || fail "transcribe-en not executable in bundle"
 [ -x "$WF/Contents/Resources/fetch-ru-assets.sh" ] || fail "fetcher not executable in bundle"
 
+# transcribe-ru (~30 MB, gitignored) must NEVER be bundled — the whole
+# architecture rests on it living in Application Support, fetched on first
+# Russian use. A careless `cp -R bin/* Resources/` in some future change
+# would put it here and nothing else would catch that.
+if [ -e "$WF/Contents/Resources/transcribe-ru" ]; then
+  fail "transcribe-ru must NOT be bundled (belongs in Application Support)"
+fi
+
 # The embedded script must match the readable source.
 python3 - "$WF/Contents/document.wflow" "$HERE/../src/transcribe.applescript" <<'PY'
 import plistlib, sys

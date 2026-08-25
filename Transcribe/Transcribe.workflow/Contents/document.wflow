@@ -534,15 +534,15 @@ end findFFmpeg
 				<key>Class Name</key>
 				<string>RunScriptAction</string>
 				<key>InputUUID</key>
-				<string>C63E8321-CD13-44DA-AD18-FA9B7CAA4517</string>
+				<string>B3BE68C3-CC0B-4758-9830-6E9B0D582A1F</string>
 				<key>Keywords</key>
 				<array>
 					<string>Run</string>
 				</array>
 				<key>OutputUUID</key>
-				<string>FD3E8BFD-1631-43BD-9B2C-ABF7CD674D53</string>
+				<string>799B5018-5CEC-4CE2-8E40-C10D9F114B62</string>
 				<key>UUID</key>
-				<string>F6F4BDC3-DE66-4A51-AEE9-2872294C45CA</string>
+				<string>2717E861-8D90-402D-8CA4-939B7D8AB32E</string>
 				<key>UnlocalizedApplications</key>
 				<array>
 					<string>Automator</string>
