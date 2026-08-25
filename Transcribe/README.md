@@ -16,7 +16,7 @@ Both languages go through the same batch/progress/collision-safe pipeline; only 
 The Russian model isn't bundled — it's fetched once, on first use, and cached:
 
 - Lands in `~/Library/Application Support/AwesomeQuickActions/transcribe/`
-- ~257 MB total: encoder (224 MB) + decoder (4 MB) + joiner (2 MB) + silero VAD (~0.6 MB) + the `transcribe-ru` binary (~30 MB)
+- ~277 MB total: encoder (224.6 MB) + decoder (4.6 MB) + joiner (2.7 MB) + silero VAD (~0.6 MB) + the `transcribe-ru` binary (~44.5 MB)
 - Every file is checksum-verified against `assets.manifest` and installed atomically (no partial/corrupt state on a failed or interrupted download)
 - English needs none of this — it never touches the network.
 
@@ -30,7 +30,7 @@ Long audio is segmented **in-process** by [silero VAD](https://github.com/snaker
   ```
   Auto-detected in `/opt/homebrew/bin`, `/usr/local/bin` (Intel), `/opt/local/bin` (MacPorts), or `PATH`.
 - **English** additionally requires **macOS 26+** (for `SpeechTranscriber`).
-- **Russian** works on any macOS Transcribe supports — the model download happens on first use (see above).
+- **Russian** needs only macOS 14+ (`transcribe-ru` uses AVFoundation and sherpa-onnx, no macOS 26 API) — the model download happens on first use (see above).
 
 ## Install
 

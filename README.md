@@ -22,7 +22,7 @@ Each action has a **custom icon** in the right-click menu and adapts to light/da
   brew install ffmpeg
   ```
   The action auto-detects `ffmpeg` in `/opt/homebrew/bin`, `/usr/local/bin` (Intel), `/opt/local/bin` (MacPorts), or your `PATH`.
-- **Transcribe only:** macOS 26+ (for the English engine) and `ffmpeg`. The Russian model (~257 MB) downloads itself on first use.
+- **Transcribe only:** macOS 26+ (for the English engine) and `ffmpeg`. The Russian model (~277 MB) downloads itself on first use.
 
 ## Install
 
@@ -71,6 +71,7 @@ awesome-quick-actions/
 │   └── README.md
 ├── FileTools/                # Copy path / Checksum / New file / Rename batch
 ├── QR/                       # Create QR (text/URL) / Decode QR (from image)
+├── Transcribe/               # Audio/video → .txt: Apple Speech (EN) + sherpa-onnx / GigaAM v3 (RU)
 ├── install.sh                # installs all of them
 └── uninstall.sh
 ```

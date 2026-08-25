@@ -63,8 +63,12 @@ lipo -create "$DIR/bin/transcribe-en.arm64" "$DIR/bin/transcribe-en.x86_64" \
 strip "$DIR/bin/transcribe-en"
 
 echo "Building transcribe-ru…"
+# transcribe-ru uses only AVFoundation + sherpa-onnx (no macOS 26 API), so it
+# is built against a much older deployment target than transcribe-en, which
+# genuinely needs macOS 26 for SpeechTranscriber. Keep this the lowest target
+# that links cleanly against the prebuilt universal sherpa-onnx libs.
 for ARCH in arm64 x86_64; do
-  swiftc -lc++ -O -target ${ARCH}-apple-macos26.0 \
+  swiftc -lc++ -O -target ${ARCH}-apple-macos14.0 \
     -I "$INC" \
     -import-objc-header "$SDK/SherpaOnnx-Bridging-Header.h" \
     "$DIR/src/swift/ru/main.swift" "$SDK/SherpaOnnx.swift" \

@@ -5,4 +5,4 @@
 602ff7017a93311aad34df1437c8d7f49911353c13d6eae7a6ee7b041339465c  joiner.onnx        https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/main/joiner.onnx
 39abae20e692998290c574e606f11a9edef2902a1995463fcff63d1490cf22b7  tokens.txt         https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/main/tokens.txt
 9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6  silero_vad.onnx    https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
-2ff99f5af6464a715fe124227cca98ad42aa69d84fba48ca3a7f165630405e5f  transcribe-ru      https://github.com/hexdrx/awesome-quick-actions/releases/download/transcribe-assets-v1/transcribe-ru
+0daf0e0383a89ec8db47803f9419ff97103f9975482738a7641474c05138080e  transcribe-ru      https://github.com/hexdrx/awesome-quick-actions/releases/download/transcribe-assets-v1/transcribe-ru

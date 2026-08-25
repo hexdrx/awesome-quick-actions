@@ -5,7 +5,15 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 grep -q 'Transcribe/install.sh' "$ROOT/install.sh" || fail "root install.sh does not install Transcribe"
 grep -q 'Transcribe.workflow' "$ROOT/uninstall.sh" || fail "root uninstall.sh does not remove Transcribe"
-grep -q 'Transcribe' "$ROOT/README.md" || fail "root README has no Transcribe row"
+
+# README.md must carry all four Transcribe edits, matched by the actual
+# wired lines rather than the bare word "Transcribe" (which would still
+# match if three of the four vanished).
+grep -q '\[Transcribe\](Transcribe/)' "$ROOT/README.md" || fail "root README has no Transcribe table row"
+grep -q 'Transcribe only:' "$ROOT/README.md" || fail "root README has no Transcribe Requirements line"
+grep -q '\./Transcribe/install\.sh' "$ROOT/README.md" || fail "root README install list is missing Transcribe"
+grep -q 'Transcribe\.workflow' "$ROOT/README.md" || fail "root README uninstall list is missing Transcribe.workflow"
+
 [ -f "$ROOT/Transcribe/README.md" ] || fail "Transcribe/README.md missing"
 
 # Every manifest URL must resolve, including the Release-hosted binary.

@@ -102,10 +102,10 @@ on run {input, parameters}
 	set gDone to 0
 
 	-- Russian needs the model; fetch it before anything else. A cold fetch
-	-- downloads ~257 MB, so this needs the same generous timeout as the
+	-- downloads ~277 MB, so this needs the same generous timeout as the
 	-- engine call below, not the default AppleEvent timeout.
 	if lang is "Русский" then
-		set progress additional description to "Загрузка модели (~257 МБ)…"
+		set progress additional description to "Загрузка модели (~277 МБ)…"
 		try
 			with timeout of 3600 seconds
 				do shell script quoted form of (resDir &amp; "/fetch-ru-assets.sh") &amp; " 2&gt;&amp;1"

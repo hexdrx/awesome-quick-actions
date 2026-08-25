@@ -14,7 +14,7 @@ done
 [ -x "$WF/Contents/Resources/transcribe-en" ] || fail "transcribe-en not executable in bundle"
 [ -x "$WF/Contents/Resources/fetch-ru-assets.sh" ] || fail "fetcher not executable in bundle"
 
-# transcribe-ru (~30 MB, gitignored) must NEVER be bundled — the whole
+# transcribe-ru (~44 MB, gitignored) must NEVER be bundled — the whole
 # architecture rests on it living in Application Support, fetched on first
 # Russian use. A careless `cp -R bin/* Resources/` in some future change
 # would put it here and nothing else would catch that.
