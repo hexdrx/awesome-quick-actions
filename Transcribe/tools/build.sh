@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Build both Transcribe binaries. Downloads the sherpa-onnx SDK on first run.
-set -e
+set -eo pipefail
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SDK="$DIR/.sdk"
 VER="1.13.6"
@@ -10,6 +10,16 @@ SWIFT_SRC="https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v${VER}/swift-ap
 CAPI_URL="https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v${VER}/sherpa-onnx/c-api/c-api.h"
 
 mkdir -p "$SDK" "$DIR/bin"
+
+# Per-arch intermediates (transcribe-{en,ru}.{arm64,x86_64}) must never be
+# left behind in bin/, which is meant to hold only the two final universal
+# binaries — whether the build finishes, or aborts partway (e.g. `lipo`
+# fails after `set -e`/`pipefail` triggers). A trap on EXIT covers both.
+cleanup_intermediates() {
+  rm -f "$DIR/bin/transcribe-en.arm64" "$DIR/bin/transcribe-en.x86_64" \
+        "$DIR/bin/transcribe-ru.arm64" "$DIR/bin/transcribe-ru.x86_64"
+}
+trap cleanup_intermediates EXIT
 
 if [ ! -f "$SDK/.ok" ]; then
   echo "Downloading sherpa-onnx v${VER}…"
@@ -30,8 +40,18 @@ fi
 CAPI=$(find "$SDK" -name c-api.h -path '*sherpa-onnx*' | head -1)
 [ -n "$CAPI" ] || { echo "c-api.h not found in $SDK" >&2; exit 1; }
 INC=$(dirname "$(dirname "$(dirname "$CAPI")")")
-LIBDIR=$(dirname "$(find "$SDK" -name 'libsherpa-onnx-c-api.a' | head -1)")
+
+CAPI_LIB=$(find "$SDK" -name 'libsherpa-onnx-c-api.a' | head -1)
+[ -n "$CAPI_LIB" ] || { echo "libsherpa-onnx-c-api.a not found in $SDK" >&2; exit 1; }
+LIBDIR=$(dirname "$CAPI_LIB")
 LIBS=$(cd "$LIBDIR" && ls *.a | sed 's/^lib/-l/; s/\.a$//' | tr '\n' ' ')
+LIB_COUNT=$(cd "$LIBDIR" && ls *.a | wc -l | tr -d ' ')
+# A find/cd failure upstream would otherwise surface hundreds of lines later
+# as a wall of "Undefined symbols" from swiftc rather than a clear cause. -lt
+# 2: catches empty (0) as well as a single stray archive, either of which is
+# never a legitimate sherpa-onnx lib/ directory.
+[ -n "$LIBS" ] && [ "$LIB_COUNT" -ge 2 ] \
+  || { echo "expected multiple sherpa-onnx .a archives in $LIBDIR, found $LIB_COUNT" >&2; exit 1; }
 
 echo "Building transcribe-en…"
 swiftc -O -target arm64-apple-macos26.0 \
@@ -40,7 +60,6 @@ swiftc -O -target x86_64-apple-macos26.0 \
   "$DIR/src/swift/en/main.swift" -o "$DIR/bin/transcribe-en.x86_64"
 lipo -create "$DIR/bin/transcribe-en.arm64" "$DIR/bin/transcribe-en.x86_64" \
   -output "$DIR/bin/transcribe-en"
-rm "$DIR/bin/transcribe-en.arm64" "$DIR/bin/transcribe-en.x86_64"
 strip "$DIR/bin/transcribe-en"
 
 echo "Building transcribe-ru…"
@@ -54,7 +73,6 @@ for ARCH in arm64 x86_64; do
 done
 lipo -create "$DIR/bin/transcribe-ru.arm64" "$DIR/bin/transcribe-ru.x86_64" \
   -output "$DIR/bin/transcribe-ru"
-rm "$DIR/bin/transcribe-ru.arm64" "$DIR/bin/transcribe-ru.x86_64"
 strip "$DIR/bin/transcribe-ru"
 
 echo

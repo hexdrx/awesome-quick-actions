@@ -16,9 +16,13 @@ for b in transcribe-en transcribe-ru; do
     || fail "$b architectures are '$archs', expected exactly 'arm64 x86_64'"
 done
 
-# transcribe-ru must be self-contained: no sherpa-onnx or onnxruntime dylib.
-if otool -L "$HERE/../bin/transcribe-ru" | grep -qiE 'sherpa|onnxruntime'; then
-  fail "transcribe-ru links a dynamic sherpa-onnx/onnxruntime — must be static"
-fi
+# transcribe-ru must be self-contained: no sherpa-onnx or onnxruntime dylib —
+# checked per architecture (not just the host slice), so a regression that
+# only affects the non-host slice can't slip past this.
+for arch in arm64 x86_64; do
+  if otool -arch "$arch" -L "$HERE/../bin/transcribe-ru" | grep -qiE 'sherpa|onnxruntime'; then
+    fail "transcribe-ru ($arch slice) links a dynamic sherpa-onnx/onnxruntime — must be static"
+  fi
+done
 
 echo "PASS: test_build"
