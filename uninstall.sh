@@ -3,7 +3,7 @@
 set -e
 DEST="$HOME/Library/Services"
 
-rm -rf "$DEST/Convert.workflow" "$DEST/ZIP.workflow" "$DEST/FileTools.workflow" "$DEST/QR.workflow" "$DEST/Transcribe.workflow"
+rm -rf "$DEST/Convert.workflow" "$DEST/ZIP.workflow" "$DEST/FileTools.workflow" "$DEST/QR.workflow" "$DEST/QRText.workflow" "$DEST/Transcribe.workflow"
 
 /System/Library/CoreServices/pbs -flush 2>/dev/null || true
 killall Finder 2>/dev/null || true

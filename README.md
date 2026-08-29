@@ -7,7 +7,7 @@ A small collection of polished **macOS Finder Quick Actions** — the items that
 | 🪄 **[Convert](Convert/)** | Right-click any image / audio / video → pick a target format from a native dropdown → converted file appears next to the original. Batch, per-type menus for mixed selections, a resolution picker for video, a live progress bar, and collision-safe names. | `sips` (images) + `ffmpeg` (A/V) |
 | 🗄️ **[ZIP](ZIP/)** | Right-click file(s)/folder(s) → zipped with `zip -r`. One item → its own `.zip`; many → prompts for one archive name. No macOS junk (`__MACOSX`, `.DS_Store`), never overwrites. | `zip` (built-in) |
 | 🧰 **[File Tools](FileTools/)** | Right-click any file/folder → one menu: **Copy path** (POSIX / `file://` / name), **Checksum** (SHA-256/1, MD5, verify), **New file here**, **Rename batch** (prefix/suffix/numbering/replace). Collision-safe, no dependencies. | built-in (`shasum`, `pbcopy`, `mv`…) |
-| ▪️ **[QR](QR/)** | No menu — click an **image with a QR** and it's decoded automatically (text → clipboard, http/https opens in the browser); click a **text file** (`.txt`/`.md`/…) and its contents become a QR; click anything else and you **type** what to encode. Generated codes land **in the clipboard as an image** and open in Preview to copy/share. No dependencies. | built-in (CoreImage + Vision) |
+| ▪️ **[QR](QR/)** | No menu — click an **image with a QR** and it's decoded automatically (text → clipboard, http/https opens in the browser); click a **text file** (`.txt`/`.md`/…) and its contents become a QR; click anything else and you **type** what to encode. Plus **QR из текста**: select text in *any* app → Services → it's encoded on the spot. Generated codes land **in the clipboard as an image** and open in Preview to copy/share. No dependencies. | built-in (CoreImage + Vision) |
 | 🎙️ **[Transcribe](Transcribe/)** | Right-click audio/video → pick **Русский** or **English** → a `.txt` transcript appears next to the original. English runs on Apple's on-device recognizer; Russian on GigaAM v3 with punctuation and capitalization. Batch, progress bar, collision-safe names. | Apple Speech (EN) + sherpa-onnx / GigaAM v3 (RU) |
 
 Each action has a **custom icon** in the right-click menu and adapts to light/dark mode.
@@ -44,14 +44,14 @@ cd awesome-quick-actions
 
 **No terminal?** Double-click `Convert/Convert.workflow` (or any other `*.workflow`) in Finder and confirm **Install**. They land in `~/Library/Services/`.
 
-> After installing, right-click a file in Finder → **Quick Actions** (or the **⚙︎ Quick Actions** menu). If an action doesn't show up immediately, re-open the menu or log out/in once.
+> After installing, right-click a file in Finder → **Quick Actions** (or the **⚙︎ Quick Actions** menu). **QR из текста** is not a Finder action — select text in any app and look under **Services**. If an action doesn't show up immediately, re-open the menu or log out/in once.
 
 ## Uninstall
 
 ```sh
 ./uninstall.sh
 ```
-…or just delete the matching bundles in `~/Library/Services/` (`Convert.workflow`, `ZIP.workflow`, `FileTools.workflow`, `QR.workflow`, `Transcribe.workflow`).
+…or just delete the matching bundles in `~/Library/Services/` (`Convert.workflow`, `ZIP.workflow`, `FileTools.workflow`, `QR.workflow`, `QRText.workflow`, `Transcribe.workflow`).
 
 ---
 
@@ -70,7 +70,7 @@ awesome-quick-actions/
 │   ├── install.sh
 │   └── README.md
 ├── FileTools/                # Copy path / Checksum / New file / Rename batch
-├── QR/                       # Create QR (text/URL) / Decode QR (from image)
+├── QR/                       # QR.workflow (Finder: create/decode) + QRText.workflow (Services: selected text → QR)
 ├── Transcribe/               # Audio/video → .txt: Apple Speech (EN) + sherpa-onnx / GigaAM v3 (RU)
 ├── install.sh                # installs all of them
 └── uninstall.sh
