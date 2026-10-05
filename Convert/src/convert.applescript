@@ -13,7 +13,7 @@ on run {input, parameters}
 	set auds to {}
 	set skipped to {}
 
-	set imgExt to {"jpg", "jpeg", "png", "heic", "heif", "tif", "tiff", "gif", "bmp", "webp", "jp2"}
+	set imgExt to {"jpg", "jpeg", "png", "heic", "heif", "tif", "tiff", "gif", "bmp", "webp", "jp2", "avif", "svg"}
 	set vidExt to {"mp4", "mov", "m4v", "mkv", "webm", "avi", "wmv", "flv", "mpg", "mpeg", "m2ts", "ts", "3gp", "ogv"}
 	set audExt to {"mp3", "m4a", "aac", "wav", "flac", "aiff", "aif", "ogg", "oga", "opus", "wma", "amr", "awb", "3ga"}
 
@@ -71,8 +71,13 @@ on run {input, parameters}
 
 	if totalN > 0 then set progress completed steps to totalN
 
-	if okCount is 0 and (count of errs) is 0 then
-		if (count of skipped) > 0 then display notification "Нет поддерживаемых файлов" with title "Convert"
+	if totalN is 0 then
+		set AppleScript's text item delimiters to return
+		set stext to skipped as text
+		set AppleScript's text item delimiters to ""
+		display alert "Нет поддерживаемых файлов" message stext as warning
+	else if okCount is 0 and (count of errs) is 0 then
+		-- the format menu was cancelled
 	else
 		set msg to (okCount as text) & " файл(ов) готово"
 		if (count of errs) > 0 then set msg to msg & ", ошибок: " & (count of errs)
@@ -131,10 +136,17 @@ on doImages(flist, SIPS)
 		set progress additional description to (my baseName(pp)) & "  →  " & target
 		set outp to my uniqueOut(my dirOf(pp), my baseOf(pp), ex)
 		try
-			do shell script SIPS & " -s format " & sf & extra & " " & quoted form of pp & " --out " & quoted form of outp
+			set src to my rasterIn(pp, {"JPEG", "BMP", "HEIC"} contains target)
+			try
+				do shell script SIPS & " -s format " & sf & extra & " " & quoted form of src & " --out " & quoted form of outp
+			on error errMsg
+				my dropRaster(src, pp)
+				error errMsg
+			end try
+			my dropRaster(src, pp)
 			set okc to okc + 1
 		on error errMsg
-			set end of errs to (my baseName(pp)) & " -> " & target
+			set end of errs to (my baseName(pp)) & " -> " & target & ": " & errMsg
 		end try
 		set gDone to gDone + 1
 		set progress completed steps to gDone
@@ -160,6 +172,9 @@ on doSVG(flist, SIPS, target)
 	repeat with p in flist
 		set pp to contents of p
 		set progress additional description to (my baseName(pp)) & "  →  " & target
+		if my extOf(pp) is "svg" then
+			set end of errs to (my baseName(pp)) & " -> " & target & ": уже SVG"
+		else
 		set outp to my uniqueOut(my dirOf(pp), my baseOf(pp), "svg")
 		set q to quoted form of pp
 		set qo to quoted form of outp
@@ -190,11 +205,33 @@ on doSVG(flist, SIPS, target)
 			end try
 			set end of errs to (my baseName(pp)) & " -> " & target
 		end try
+		end if
 		set gDone to gDone + 1
 		set progress completed steps to gDone
 	end repeat
 	return {okc, errs}
 end doSVG
+
+-- sips can't read SVG: render it to a temp PNG (longest side 2048 px) with rsvg-convert.
+-- opaque = flatten onto white, for targets without alpha (JPEG/BMP/HEIC/trace).
+on rasterIn(pp, opaque)
+	if my extOf(pp) is not "svg" then return pp
+	set RSVG to my findTool("rsvg-convert")
+	if RSVG is missing value then error "нужен rsvg-convert (brew install librsvg)"
+	set tmpPng to (do shell script "/usr/bin/mktemp -t convert") & ".png"
+	set bg to ""
+	if opaque then set bg to " -b white"
+	do shell script RSVG & " -f png -a -w 2048 -h 2048" & bg & " -o " & quoted form of tmpPng & " " & quoted form of pp
+	return tmpPng
+end rasterIn
+
+on dropRaster(src, pp)
+	if src is not pp then
+		try
+			do shell script "rm -f " & quoted form of src & " " & quoted form of (text 1 thru -5 of src)
+		end try
+	end if
+end dropRaster
 
 on doAudios(flist, FF)
 	set names to {"MP3", "M4A (AAC)", "WAV", "FLAC", "AIFF", "OGG (Opus)"}

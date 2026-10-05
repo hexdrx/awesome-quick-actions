@@ -27,4 +27,10 @@ if ! command -v potrace >/dev/null 2>&1 \
   echo "ℹ️  potrace not found — vector SVG needs it:  brew install potrace"
 fi
 
+if ! command -v rsvg-convert >/dev/null 2>&1 \
+   && [ ! -x /opt/homebrew/bin/rsvg-convert ] \
+   && [ ! -x /usr/local/bin/rsvg-convert ]; then
+  echo "ℹ️  rsvg-convert not found — converting FROM .svg needs it:  brew install librsvg"
+fi
+
 echo "✅ Installed. Right-click an image/audio/video in Finder → Quick Actions → Convert"

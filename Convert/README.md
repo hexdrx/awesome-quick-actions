@@ -24,6 +24,8 @@ A Finder Quick Action that converts **images, audio, and video** in place. Right
 - **SVG (вектор, ч/б)** — a real vector trace via [`potrace`](https://potrace.sourceforge.net) (`brew install potrace`). Black & white only: great for logos, icons, signatures, scans. Transparency is flattened onto white first.
 - **SVG (встроенная картинка)** — the image embedded as base64 inside an SVG wrapper (JPEG for photos, PNG if it has alpha). Looks exactly like the original, no dependencies, but isn't truly scalable.
 
+**SVG and AVIF as input:** AVIF is read by `sips` natively. SVG is first rendered with `rsvg-convert` (`brew install librsvg`) to a PNG whose longest side is 2048 px, transparent — or on white for JPEG/BMP/HEIC — then converted like any other image.
+
 AMR (`.amr`, `.awb`, `.3ga`) phone recordings are recognized as audio and decode fine (e.g. AMR → WAV).
 
 Defaults: H.264 CRF 23 / audio ~192 kbps — a balanced quality/size preset.
@@ -32,6 +34,7 @@ Defaults: H.264 CRF 23 / audio ~192 kbps — a balanced quality/size preset.
 
 - `sips` — built into macOS (images work out of the box).
 - [`potrace`](https://potrace.sourceforge.net) — only for vector SVG: `brew install potrace`.
+- `rsvg-convert` — only for SVG **input**: `brew install librsvg`.
 - [`ffmpeg`](https://ffmpeg.org) for audio/video: `brew install ffmpeg`.
   Auto-detected in `/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`, or `PATH`.
 
