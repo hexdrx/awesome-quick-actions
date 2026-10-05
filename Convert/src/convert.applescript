@@ -89,10 +89,11 @@ on run {input, parameters}
 end run
 
 on doImages(flist, SIPS)
-	set names to {"PNG", "JPEG", "HEIC", "TIFF", "GIF", "BMP", "PDF"}
+	set names to {"PNG", "JPEG", "HEIC", "TIFF", "GIF", "BMP", "PDF", "SVG (вектор, ч/б)", "SVG (встроенная картинка)"}
 	set choice to (choose from list names with title ("Convert · Картинки (" & (count flist) & ")") with prompt "В какой формат?" default items {"JPEG"})
 	if choice is false then return {0, {}}
 	set target to item 1 of choice
+	if target starts with "SVG" then return my doSVG(flist, SIPS, target)
 	if target is "PNG" then
 		set sf to "png"
 		set ex to "png"
@@ -140,6 +141,60 @@ on doImages(flist, SIPS)
 	end repeat
 	return {okc, errs}
 end doImages
+
+-- SVG: either a potrace bitmap trace (black & white, real vector) or the image
+-- embedded as base64 inside an SVG wrapper (exact look, no dependencies).
+on doSVG(flist, SIPS, target)
+	set isTrace to (target is "SVG (вектор, ч/б)")
+	if isTrace then
+		set PT to my findTool("potrace")
+		if PT is missing value then
+			display alert "potrace не найден" message "Для векторного SVG установи potrace: brew install potrace" as warning
+			return {0, {}}
+		end if
+		set FF to my findTool("ffmpeg")
+	end if
+	set okc to 0
+	set errs to {}
+	set progress description to "Convert · Картинки"
+	repeat with p in flist
+		set pp to contents of p
+		set progress additional description to (my baseName(pp)) & "  →  " & target
+		set outp to my uniqueOut(my dirOf(pp), my baseOf(pp), "svg")
+		set q to quoted form of pp
+		set qo to quoted form of outp
+		-- every intermediate goes through sips first, so HEIC/WEBP/… all work
+		set sh to "set -e; T=$(mktemp -d); trap 'rm -rf \"$T\"' EXIT; "
+		if isTrace then
+			-- flatten transparency onto white (else transparent pixels trace as black), then trace
+			set sh to sh & SIPS & " -s format png " & q & " --out \"$T/i.png\" >/dev/null; " & ¬
+				FF & " -y -v error -i \"$T/i.png\" -filter_complex 'color=white[bg];[bg][0:v]scale2ref[b][f];[b][f]overlay=format=auto,format=gray' -frames:v 1 \"$T/i.pgm\"; " & ¬
+				PT & " -s -o \"$T/o.svg\" \"$T/i.pgm\"; " & ¬
+				"/usr/bin/sed -E 's/([0-9])pt\"/\\1\"/g' \"$T/o.svg\" > " & qo
+		else
+			-- photos (no alpha) embed as JPEG to stay small; anything with alpha embeds as PNG
+			set sh to sh & "if " & SIPS & " -g hasAlpha " & q & " | /usr/bin/grep -q 'hasAlpha: yes'; then M=png; " & ¬
+				SIPS & " -s format png " & q & " --out \"$T/i\" >/dev/null; else M=jpeg; " & ¬
+				SIPS & " -s format jpeg -s formatOptions 90 " & q & " --out \"$T/i\" >/dev/null; fi; " & ¬
+				"W=$(" & SIPS & " -g pixelWidth \"$T/i\" | /usr/bin/awk '/pixelWidth/{print $2}'); " & ¬
+				"H=$(" & SIPS & " -g pixelHeight \"$T/i\" | /usr/bin/awk '/pixelHeight/{print $2}'); " & ¬
+				"{ printf '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%s\" height=\"%s\" viewBox=\"0 0 %s %s\"><image width=\"%s\" height=\"%s\" href=\"data:image/%s;base64,' $W $H $W $H $W $H $M; " & ¬
+				"/usr/bin/base64 -i \"$T/i\" | /usr/bin/tr -d '\\n'; printf '\"/></svg>\\n'; } > " & qo
+		end if
+		try
+			do shell script sh
+			set okc to okc + 1
+		on error errMsg
+			try
+				do shell script "rm -f " & qo
+			end try
+			set end of errs to (my baseName(pp)) & " -> " & target
+		end try
+		set gDone to gDone + 1
+		set progress completed steps to gDone
+	end repeat
+	return {okc, errs}
+end doSVG
 
 on doAudios(flist, FF)
 	set names to {"MP3", "M4A (AAC)", "WAV", "FLAC", "AIFF", "OGG (Opus)"}
@@ -366,15 +421,19 @@ on replaceText(s, findT, replaceT)
 end replaceText
 
 on findFFmpeg()
-	repeat with c in {"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg"}
+	return my findTool("ffmpeg")
+end findFFmpeg
+
+on findTool(nm)
+	repeat with c in {"/opt/homebrew/bin/", "/usr/local/bin/", "/opt/local/bin/"}
 		try
-			do shell script "test -x " & quoted form of (contents of c)
-			return (contents of c)
+			do shell script "test -x " & quoted form of ((contents of c) & nm)
+			return (contents of c) & nm
 		end try
 	end repeat
 	try
-		return (do shell script "/usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin command -v ffmpeg")
+		return (do shell script "/usr/bin/env PATH=/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin command -v " & nm)
 	on error
 		return missing value
 	end try
-end findFFmpeg
+end findTool

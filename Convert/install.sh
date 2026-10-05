@@ -21,4 +21,10 @@ if ! command -v ffmpeg >/dev/null 2>&1 \
   echo "    (images via sips work without it)"
 fi
 
+if ! command -v potrace >/dev/null 2>&1 \
+   && [ ! -x /opt/homebrew/bin/potrace ] \
+   && [ ! -x /usr/local/bin/potrace ]; then
+  echo "ℹ️  potrace not found — vector SVG needs it:  brew install potrace"
+fi
+
 echo "✅ Installed. Right-click an image/audio/video in Finder → Quick Actions → Convert"

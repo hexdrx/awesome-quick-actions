@@ -16,9 +16,13 @@ A Finder Quick Action that converts **images, audio, and video** in place. Right
 
 | Input type | Convert to |
 |-----------|------------|
-| **Images** (`sips`) | PNG · JPEG · HEIC · TIFF · GIF · BMP · PDF |
+| **Images** (`sips`) | PNG · JPEG · HEIC · TIFF · GIF · BMP · PDF · SVG |
 | **Audio** (`ffmpeg`) | MP3 · M4A (AAC) · WAV · FLAC · AIFF · OGG (Opus) |
 | **Video** (`ffmpeg`) | MP4 (H.264) · MOV · WEBM (VP9) · MKV · GIF · + extract audio → MP3 / M4A |
+
+**SVG** comes in two flavors:
+- **SVG (вектор, ч/б)** — a real vector trace via [`potrace`](https://potrace.sourceforge.net) (`brew install potrace`). Black & white only: great for logos, icons, signatures, scans. Transparency is flattened onto white first.
+- **SVG (встроенная картинка)** — the image embedded as base64 inside an SVG wrapper (JPEG for photos, PNG if it has alpha). Looks exactly like the original, no dependencies, but isn't truly scalable.
 
 AMR (`.amr`, `.awb`, `.3ga`) phone recordings are recognized as audio and decode fine (e.g. AMR → WAV).
 
@@ -27,6 +31,7 @@ Defaults: H.264 CRF 23 / audio ~192 kbps — a balanced quality/size preset.
 ## Requirements
 
 - `sips` — built into macOS (images work out of the box).
+- [`potrace`](https://potrace.sourceforge.net) — only for vector SVG: `brew install potrace`.
 - [`ffmpeg`](https://ffmpeg.org) for audio/video: `brew install ffmpeg`.
   Auto-detected in `/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`, or `PATH`.
 
